@@ -1,8 +1,10 @@
-eBPF: Next-Gen Kernel-Level Threat Detection
+# Sentinel-eBPF: Next-Gen Kernel-Level Threat Detection
 
 > **Status:** Production-Ready Lab  
 > **Architecture:** eBPF (C) + Go Userspace Agent + React/TypeScript Dashboard  
 > **Author:** [locallhosts](https://github.com/locallhosts)
+
+![Live Demo - Terminal Alert](docs/assets/live-demo.gif)
 
 ## Executive Summary
 
@@ -73,6 +75,9 @@ The Go backend successfully serves structured alerts via the `/api/alerts` endpo
 
 ### 4. Live React Dashboard
 The TypeScript dashboard fetching live alerts, filtering by severity, and mapping them to MITRE ATT&CK techniques in real-time.
+
+![Live Demo - React Dashboard](docs/assets/live-demo_dashbaord.gif)
+
 ![React Dashboard - Live Console](docs/assets/Capture-Web.PNG)
 *Dashboard filtered to show only Critical W^X memory bypass events:*
 ![React Dashboard - Critical Alerts](docs/assets/dashboard-critical.png)
@@ -149,7 +154,8 @@ ebpf-edr/
 │   ├── store.go              # In-memory bounded alert ring for API
 │   ├── metrics.go            # Prometheus metric definitions
 │   ├── api.go                # HTTP server (JSON alerts + Prometheus)
-│   └── utils.go              # Helper functions (splitTracepoint, etc.)
+│   ├── util.go               # Helper functions (splitTracepoint, etc.)
+│   └── monitor.bpf.o         # Compiled eBPF bytecode (embedded via go:embed)
 ├── dashboard/
 │   ├── src/
 │   │   ├── App.tsx           # Main React UI, severity filtering, MITRE mapping
@@ -160,7 +166,7 @@ ebpf-edr/
 │   ├── edr-agent.service     # Hardened systemd unit for agent deployment
 │   └── Dockerfile.dashboard  # Multi-stage build for static React app
 ├── docs/
-│   └── assets/               # Live verification screenshots
+│   └── assets/               # Live verification screenshots and GIFs
 ├── Makefile                  # Build automation (vmlinux, bpf, agent, dashboard)
 └── README.md
 ```
