@@ -1,0 +1,23 @@
+# Dashboard container - this is fine to run containerized since it's
+# just a static SPA hitting the agent's HTTP API.
+#
+# The AGENT ITSELF is intentionally NOT dockerized here by default:
+# eBPF kprobe attachment needs host-level kernel access that standard
+# container runtimes restrict (see README "Deployment environments").
+# If you want to containerize the agent anyway for convenience, run it
+# with --privileged --pid=host -v /sys/kernel/tracing:/sys/kernel/tracing
+# -v /sys/kernel/debug:/sys/kernel/debug, and expect tracepoint-only
+# coverage unless the host genuinely grants kprobe access.
+
+FROM node:20-slim AS build
+WORKDIR /app
+COPY dashboard/package.json dashboard/package-lock.json* ./
+RUN npm install
+COPY dashboard/ ./
+ARG VITE_AGENT_URL=http://localhost:9090
+ENV VITE_AGENT_URL=$VITE_AGENT_URL
+RUN npm run build
+
+FROM nginx:alpine
+COPY --from=build /app/dist /usr/share/nginx/html
+EXPOSE 80

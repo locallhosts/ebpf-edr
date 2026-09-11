@@ -1,0 +1,25 @@
+[Unit]
+Description=eBPF Kernel Threat Detection Agent
+Documentation=https://github.com/locallhosts/ebpf-edr
+After=network.target
+
+[Service]
+Type=simple
+# Needs root (or CAP_BPF + CAP_PERFMON + CAP_SYS_RESOURCE on kernels
+# that support fine-grained BPF capabilities, roughly 5.8+) to load
+# programs and attach kprobes/tracepoints.
+ExecStart=/usr/local/bin/edr-agent -addr :9090
+Restart=on-failure
+RestartSec=5
+# Hardening: the agent only needs BPF + network bind, not a general
+# root shell. On kernels new enough to split BPF capabilities finely,
+# prefer AmbientCapabilities over running as literal root:
+# AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_NET_ADMIN
+# User=edr-agent
+NoNewPrivileges=false
+ProtectSystem=strict
+ReadOnlyPaths=/
+ReadWritePaths=/sys/fs/bpf /sys/kernel/tracing /sys/kernel/debug/tracing
+
+[Install]
+WantedBy=multi-user.target
