@@ -31,7 +31,7 @@ The system is designed to demonstrate how security telemetry can be collected cl
 > **Visual evidence:** The screenshots and GIFs above are captured from the project's kernel telemetry, detection, API, and dashboard workflows.
 
 
-Sentinel-eBPF is a Linux security monitoring and detection-engineering project built around **eBPF**. It collects selected security-relevant activity close to the Linux kernel, transfers structured events through a BPF ring buffer, normalizes and correlates them in Go, and exposes security alerts and network telemetry through REST APIs and a React/TypeScript SOC-style dashboard.
+eBPF EDR is a Linux security monitoring and detection-engineering project built around **eBPF**. It collects selected security-relevant activity close to the Linux kernel, transfers structured events through a BPF ring buffer, normalizes and correlates them in Go, and exposes security alerts and network telemetry through REST APIs and a React/TypeScript SOC-style dashboard.
 
 The current implementation covers process and file activity, memory and cross-process operations, privilege and kernel-related signals, socket creation, TCP/UDP telemetry, and generic IPv4/IPv6 packet metadata.
 
@@ -64,7 +64,7 @@ The current implementation covers process and file activity, memory and cross-pr
 
 Userspace monitoring can depend on library- or application-level observation. Applications may bypass some of those observation points by making syscalls directly or using alternate execution paths.
 
-Sentinel-eBPF moves selected telemetry collection closer to the Linux kernel. This provides a different observation point and reduces exclusive reliance on userspace API hooks.
+eBPF EDR moves selected telemetry collection closer to the Linux kernel. This provides a different observation point and reduces exclusive reliance on userspace API hooks.
 
 The current implementation focuses on:
 
@@ -123,7 +123,7 @@ The architecture deliberately separates:
 
 The repository includes a dedicated system architecture diagram:
 
-![Sentinel-eBPF Architecture](docs/assets/architecture.png)
+![eBPF EDR Architecture](docs/assets/architecture.png)
 
 ---
 
@@ -285,7 +285,7 @@ It does not provide universal visibility into ARP, LLDP, Ethernet-only frames, o
 
 The current IPv6 parser does not walk arbitrary extension-header chains; it records the immediate `next_header` value.
 
-Socket-level and packet-level hooks can observe related activity, so duplicate network records are possible. Event correlation/deduplication is a future improvement.
+Socket-level and packet-level hooks can observe related activity. Userspace now applies bounded metadata deduplication to identical records within a configurable short window; semantically different events are retained.
 
 ## Payload boundary
 
@@ -299,7 +299,7 @@ The event structure carries process identity, execution context, alert flags, IP
 
 ### Event ABI visual reference
 
-![Sentinel-eBPF Event ABI](docs/assets/eventabi.png)
+![eBPF EDR Event ABI](docs/assets/eventabi.png)
 
 The ABI is a contract between the C/eBPF layer and Go. Changes to its field layout require coordinated kernel/userspace updates.
 
@@ -365,7 +365,7 @@ CROSS_PROCESS_INJECT
 ---
 
 # Detection Coverage
-![Sentinel-eBPF Detection](docs/assets/detection_coverage.png)
+![eBPF EDR Detection](docs/assets/detection_coverage.png)
 
 * ATT&CK mappings are approximate behavioral mappings, not claims that every event represents the technique.
 
@@ -684,8 +684,8 @@ The generic packet path is IPv4/IPv6 oriented, not full Ethernet/L2 visibility. 
 - [x] Socket creation
 - [x] Generic IPv4 packet telemetry
 - [x] Generic IPv6 packet telemetry
-- [x] Expanded Layer-2/XDP telemetry
-- [x] IPv6 extension-header traversal
+- [ ] Expanded Layer-2/XDP telemetry
+- [ ] IPv6 extension-header traversal
 
 ## Detection Engineering
 
@@ -699,10 +699,10 @@ The generic packet path is IPv4/IPv6 oriented, not full Ethernet/L2 visibility. 
 - [x] Persistence indicators
 - [x] Raw/packet-socket indicators
 - [x] Namespace manipulation indicators
-- [ ] Configurable detection policies
+- [x] Configurable detection policies
 - [x] Environment-specific allow-lists
 - [x] Network event deduplication
-- [x] Expanded ATT&CK coverage
+- [ ] Expanded ATT&CK coverage
 
 ## Operations
 
@@ -774,6 +774,10 @@ Current implementation includes:
 - Generic IP packet metadata
 - Socket telemetry
 - Bounded network event storage
+- Configurable detection policy and allow-lists
+- Network metadata deduplication
+- Best-effort container/cgroup context
+- Vendor-neutral SIEM/SOAR webhook integration
 - REST APIs
 - Prometheus metrics
 - React/TypeScript dashboard
@@ -799,11 +803,15 @@ Compilation does not guarantee deployment compatibility. BTF, CO-RE, kernel symb
 
 ### Detection versus observation
 
-Collecting an event and interpreting it are separate problems. Sentinel-eBPF intentionally keeps those layers distinct.
+Collecting an event and interpreting it are separate problems. eBPF EDR intentionally keeps those layers distinct.
 
 ### Network telemetry design
 
-Socket-level telemetry provides process context while generic packet hooks broaden protocol visibility. Combining both increases coverage but introduces possible duplicates and kernel-version dependencies.
+Socket-level telemetry provides process context while generic packet hooks broaden protocol visibility. Combining both increases coverage but introduces kernel-version dependencies; bounded userspace deduplication reduces repeated metadata without collapsing distinct directional events.
+
+### Operational policy
+
+Detection policy belongs outside the kernel collection layer. This project therefore keeps allow-lists, rule suppression, integration delivery, and operational tuning in userspace so telemetry collection remains stable while deployment policy can vary.
 
 ---
 
