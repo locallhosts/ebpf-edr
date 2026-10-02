@@ -7,6 +7,33 @@
 
 ![Live Demo - Terminal Alert](docs/assets/live-demo.gif)
 
+<p align="center">
+  <img src="docs/assets/live-demo_dashbaord.gif" alt="Live SOC Dashboard" width="48%">
+  <img src="docs/assets/live-demo_web.gif" alt="Live Web Dashboard" width="48%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/Capture-Web.PNG" alt="SOC Web Dashboard" width="48%">
+  <img src="docs/assets/dashboard-critical.png" alt="Critical Security Alerts" width="48%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/Capture-Terminal.PNG" alt="Agent Terminal Telemetry" width="48%">
+  <img src="docs/assets/Capture3.PNG" alt="Continuous Security Alerts" width="48%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/Capture4.PNG" alt="Alert API Output" width="48%">
+  <img src="docs/assets/Capture5.PNG" alt="W-X Memory Detection" width="48%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/Capture2.PNG" alt="Additional Telemetry Evidence" width="48%">
+</p>
+
+> **Visual evidence:** The screenshots and GIFs above are captured from the project's kernel telemetry, detection, API, and dashboard workflows.
+
+
 Sentinel-eBPF is a Linux security monitoring and detection-engineering project built around **eBPF**. It collects selected security-relevant activity close to the Linux kernel, transfers structured events through a BPF ring buffer, normalizes and correlates them in Go, and exposes security alerts and network telemetry through REST APIs and a React/TypeScript SOC-style dashboard.
 
 The current implementation covers process and file activity, memory and cross-process operations, privilege and kernel-related signals, socket creation, TCP/UDP telemetry, and generic IPv4/IPv6 packet metadata.
