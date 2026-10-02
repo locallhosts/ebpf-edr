@@ -24,6 +24,7 @@ const (
     EvtSocketCreate uint32 = 13
     EvtUnlink       uint32 = 14
     EvtSetNS        uint32 = 15
+    EvtPacket       uint32 = 16
 )
 
 const (
@@ -94,6 +95,7 @@ type Event struct {
     NewUID     uint32
     SockFamily uint32
     SockType   uint32
+    PacketLen  uint32
 }
 
 func (e Event) TypeName() string {
@@ -113,6 +115,7 @@ func (e Event) TypeName() string {
     case EvtSocketCreate: return "SOCKET"
     case EvtUnlink:       return "UNLINK"
     case EvtSetNS:        return "SETNS"
+    case EvtPacket:       return "PACKET"
     default:              return "UNKNOWN"
     }
 }
@@ -145,7 +148,7 @@ func (e Event) DirectionName() string {
 }
 
 func (e Event) NetworkEvent() bool {
-    return e.Type == EvtConnect || e.Type == EvtAccept || e.Type == EvtListen
+    return e.Type == EvtConnect || e.Type == EvtAccept || e.Type == EvtListen || e.Type == EvtPacket || e.Type == EvtSocketCreate
 }
 
 func (e Event) DecodeAlerts() string {
@@ -208,7 +211,7 @@ func ipv6FromRaw(b []byte) net.IP {
 
 // parseEvent decodes the current v4 event ABI (504 bytes on 64-bit Linux).
 func parseEvent(raw []byte) (Event, error) {
-    const expectedSize = 504
+    const expectedSize = 512
     if len(raw) < expectedSize {
         return Event{}, fmt.Errorf("short ring buffer record: got %d bytes, want >= %d", len(raw), expectedSize)
     }
@@ -252,6 +255,7 @@ func parseEvent(raw []byte) (Event, error) {
     ev.NewUID = readU32()
     ev.SockFamily = readU32()
     ev.SockType = readU32()
+    ev.PacketLen = readU32()
 
     if ev.Family != FamilyIPv4 {
         ev.DstAddr = nil
