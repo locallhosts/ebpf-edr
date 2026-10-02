@@ -714,7 +714,7 @@ The generic packet path is IPv4/IPv6 oriented, not full Ethernet/L2 visibility. 
 - [x] React/TypeScript dashboard
 - [x] GitHub Actions CI
 - [x] Reproducible performance benchmarks
-- [x] Event-loss stress testing
+- [ ] Event-loss stress testing
 - [x] Container-aware telemetry
 - [x] SIEM/SOAR integrations
 
