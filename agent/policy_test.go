@@ -102,3 +102,19 @@ func TestNetworkStoreConcurrentStress(t *testing.T) {
 		t.Fatalf("store exceeded configured capacity: %d", got)
 	}
 }
+
+
+func TestPersistenceTechniqueMappings(t *testing.T) {
+	tests := map[string]string{
+		"/etc/cron.d/example": "T1053.003",
+		"/etc/systemd/system/edr-test.service": "T1543.002",
+		"/root/.ssh/authorized_keys": "T1098.004",
+		"/etc/ld.so.preload": "T1574.006",
+		"/tmp/example": "T1547",
+	}
+	for path, want := range tests {
+		if got := persistenceTechnique(path); got != want {
+			t.Fatalf("%s: got %s, want %s", path, got, want)
+		}
+	}
+}
