@@ -1,8 +1,6 @@
-// Mirrors agent/detect.go `Alert` struct field-for-field (JSON tags
-// must match). If you add a field on the Go side, add it here too —
-// there is no shared schema file, so this is the contract.
+// Mirrors agent/detect.go Alert JSON contract.
 export interface Alert {
-  time: string; // RFC3339, from Go's time.Time JSON marshaling
+  time: string;
   severity: "Low" | "Medium" | "High" | "Critical";
   mitre_technique: string;
   rule: string;
@@ -10,6 +8,14 @@ export interface Alert {
   ppid: number;
   comm: string;
   description: string;
+
+  protocol?: string;
+  family?: string;
+  direction?: "INBOUND" | "OUTBOUND";
+  src_addr?: string;
+  src_port?: number;
+  dst_addr?: string;
+  dst_port?: number;
 }
 
 export const severityRank: Record<Alert["severity"], number> = {
