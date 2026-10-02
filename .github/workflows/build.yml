@@ -1,0 +1,34 @@
+name: eBPF EDR Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install eBPF build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm libbpf-dev libelf-dev bpftool
+
+      - name: Build eBPF object
+        run: make bpf
+
+      - name: Format Go
+        run: test -z "$(gofmt -l agent)"
+
+      - name: Build agent
+        run: go build -o /tmp/edr-agent ./agent
+
+      - name: Compile agent tests
+        run: go test ./agent
