@@ -87,9 +87,10 @@ func TestNetworkStoreConcurrentStress(t *testing.T) {
 	done := make(chan struct{})
 	for i := 0; i < 16; i++ {
 		go func(seed uint16) {
+			local := ev
 			for j := 0; j < 5000; j++ {
-				ev.SrcPort = seed + uint16(j%100)
-				s.Add(ev, "")
+				local.SrcPort = seed + uint16(j%100)
+				s.Add(local, "")
 				_ = s.Snapshot()
 			}
 			done <- struct{}{}
