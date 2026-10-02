@@ -4,8 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-echo "[1/6] Go formatting and static checks"
-gofmt -w agent/*.go
+echo "[1/6] Go static checks"
 go vet ./agent
 go test ./agent
 
