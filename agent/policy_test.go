@@ -87,9 +87,10 @@ func TestNetworkStoreConcurrentStress(t *testing.T) {
 	done := make(chan struct{})
 	for i := 0; i < 16; i++ {
 		go func(seed uint16) {
+			local := ev
 			for j := 0; j < 5000; j++ {
-				ev.SrcPort = seed + uint16(j%100)
-				s.Add(ev, "")
+				local.SrcPort = seed + uint16(j%100)
+				s.Add(local, "")
 				_ = s.Snapshot()
 			}
 			done <- struct{}{}
@@ -100,5 +101,21 @@ func TestNetworkStoreConcurrentStress(t *testing.T) {
 	}
 	if got := len(s.Snapshot()); got > 128 {
 		t.Fatalf("store exceeded configured capacity: %d", got)
+	}
+}
+
+
+func TestPersistenceTechniqueMappings(t *testing.T) {
+	tests := map[string]string{
+		"/etc/cron.d/example": "T1053.003",
+		"/etc/systemd/system/edr-test.service": "T1543.002",
+		"/root/.ssh/authorized_keys": "T1098.004",
+		"/etc/ld.so.preload": "T1574.006",
+		"/tmp/example": "T1547",
+	}
+	for path, want := range tests {
+		if got := persistenceTechnique(path); got != want {
+			t.Fatalf("%s: got %s, want %s", path, got, want)
+		}
 	}
 }

@@ -10,7 +10,7 @@ import (
 type Alert struct {
     Time        time.Time `json:"time"`
     Severity    string `json:"severity"`
-    Technique   string `json:"mitre_technique"`
+    Technique   string `json:"mitre_technique,omitempty"`
     Rule        string `json:"rule"`
     Pid         uint32 `json:"pid"`
     Ppid        uint32 `json:"ppid"`
@@ -125,7 +125,8 @@ func (d *Detector) handleExec(ev Event) {
 
 func (d *Detector) handleOpen(ev Event) {
     if ev.AlertFlags&AlertPersistenceWrite != 0 {
-        d.emit(Alert{Time: time.Now(), Severity: "High", Technique: "T1053/T1547",
+        technique := persistenceTechnique(ev.Filename)
+        d.emit(Alert{Time: time.Now(), Severity: "High", Technique: technique,
             Rule: "persistence-write", Pid: ev.Pid, Ppid: ev.Ppid, Comm: ev.Comm,
             Description: fmt.Sprintf("process %q opened persistence-sensitive path %q for writing", ev.Comm, ev.Filename)})
     }
@@ -209,16 +210,16 @@ func (d *Detector) handleKernelSecurityEvent(ev Event) {
     var a *Alert
     switch {
     case ev.AlertFlags&AlertKernelModuleLoad != 0:
-        a = &Alert{Severity: "Critical", Technique: "T1014", Rule: "kernel-module-load",
+        a = &Alert{Severity: "Critical", Technique: "T1547.006", Rule: "kernel-module-load",
             Description: fmt.Sprintf("process %q loaded a kernel module", ev.Comm)}
     case ev.AlertFlags&AlertUnauthorizedBPF != 0:
-        a = &Alert{Severity: "High", Technique: "T1547", Rule: "bpf-program-load",
+        a = &Alert{Severity: "High", Technique: "", Rule: "bpf-program-load",
             Description: fmt.Sprintf("process %q attempted to load an eBPF program", ev.Comm)}
     case ev.AlertFlags&AlertPrivEscToRoot != 0:
         a = &Alert{Severity: "Critical", Technique: "T1548", Rule: "privilege-escalation-to-root",
             Description: fmt.Sprintf("credential transition changed uid from %d to root for process %q", ev.OldUID, ev.Comm)}
     case ev.AlertFlags&AlertRawSocket != 0:
-        a = &Alert{Severity: "High", Technique: "T1049", Rule: "raw-or-packet-socket",
+        a = &Alert{Severity: "High", Technique: "", Rule: "raw-or-packet-socket",
             Description: fmt.Sprintf("process %q created a raw/packet socket (family=%d type=%d)", ev.Comm, ev.SockFamily, ev.SockType)}
     case ev.AlertFlags&AlertSelfDelete != 0:
         a = &Alert{Severity: "High", Technique: "T1070.004", Rule: "self-delete",
@@ -278,4 +279,20 @@ func isDebuggerComm(comm string) bool {
         return true
     }
     return false
+}
+
+
+func persistenceTechnique(path string) string {
+    switch {
+    case strings.Contains(path, ".ssh/authorized_keys"):
+        return "T1098.004"
+    case strings.HasPrefix(path, "/etc/cron"):
+        return "T1053.003"
+    case strings.HasPrefix(path, "/etc/systemd/system/"):
+        return "T1543.002"
+    case strings.HasPrefix(path, "/etc/ld.so.preload"):
+        return "T1574.006"
+    default:
+        return "T1547"
+    }
 }

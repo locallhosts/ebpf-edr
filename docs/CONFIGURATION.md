@@ -64,3 +64,25 @@ Metrics:
 - `edr_ringbuf_lost_total`
 
 The webhook integration is vendor-neutral. A SIEM/SOAR adapter can transform the JSON alert into the destination's native event schema without coupling the agent to a specific platform.
+
+
+## XDP / Layer-2 telemetry
+
+XDP ingress telemetry is opt-in because it attaches directly to a network interface:
+
+    export EDR_XDP_INTERFACE="eth0"
+    sudo ./bin/edr-agent
+
+The XDP program runs in generic XDP mode and returns XDP_PASS, so it is a visibility sensor rather than a packet-dropping firewall. It parses Ethernet, one VLAN tag, IPv4, and IPv6 metadata. IPv6 extension headers are walked with a bounded parser.
+
+XDP events use PID/TGID 0 because the XDP hook executes before normal process context is available. They are therefore network observations, not process-attributed events.
+
+## Ring-buffer loss validation
+
+The kernel increments edr_ringbuf_lost_total whenever an event cannot be reserved from the main ring buffer. This is an actual kernel-side drop counter, not an estimate from userspace.
+
+Run the validation suite on a Linux host with root/BPF privileges:
+
+    sudo make test-validation
+
+For an end-to-end overload test, run the agent with a deliberately slowed reader in a controlled lab environment, generate a high rate of short-lived syscalls, and verify that /metrics reports a non-zero edr_ringbuf_lost_total. This is intentionally a lab validation because overload reduces telemetry fidelity.

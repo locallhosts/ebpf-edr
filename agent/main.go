@@ -85,6 +85,14 @@ func main() {
     // Start the HTTP server in a background goroutine for the React dashboard & Prometheus
     go ServeHTTP(*addr, store, networkStore)
 
+    go func() {
+        ticker := time.NewTicker(2 * time.Second)
+        defer ticker.Stop()
+        for range ticker.C {
+            probes.ObserveRingbufDrops()
+        }
+    }()
+
     // Graceful shutdown on SIGINT/SIGTERM: detach probes cleanly rather
     // than leaving orphaned BPF links pinned in the kernel.
     sigCh := make(chan os.Signal, 1)
@@ -97,7 +105,7 @@ func main() {
         os.Exit(0)
     }()
 
-    // Main event loop: Read from kernel ring buffer -> Update Metrics -> Run Detection Engine
+    // Main event loop: Read from kernel ring buffers -> Update Metrics -> Run Detection Engine
     for {
         ev, err := probes.Read()
         if err != nil {

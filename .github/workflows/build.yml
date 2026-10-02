@@ -53,11 +53,14 @@ jobs:
           test -s bpf/vmlinux.h
           wc -l bpf/vmlinux.h
 
-      - name: Build eBPF object
-        run: make bpf
+      - name: Build eBPF and XDP objects
+        run: make bpf xdp
 
       - name: Build agent
         run: go build -o /tmp/edr-agent ./agent
 
       - name: Compile agent tests
         run: go test ./agent
+
+      - name: Security validation and benchmarks
+        run: bash tests/security_validation.sh

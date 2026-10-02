@@ -259,9 +259,21 @@ static __always_inline void fill_common(struct event *ev, __u32 type) {
     ev->ppid = BPF_CORE_READ(task, real_parent, tgid);
 }
 
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u64);
+} ringbuf_drops SEC(".maps");
+
 static __always_inline void submit_event(struct event *ev) {
     struct event *out = bpf_ringbuf_reserve(&events, sizeof(*out), 0);
-    if (!out) return;
+    if (!out) {
+        __u32 zero = 0;
+        __u64 *drops = bpf_map_lookup_elem(&ringbuf_drops, &zero);
+        if (drops) __sync_fetch_and_add(drops, 1);
+        return;
+    }
     __builtin_memcpy(out, ev, sizeof(*out));
     bpf_ringbuf_submit(out, 0);
 }
@@ -651,13 +663,40 @@ static __always_inline void emit_ip_packet(struct sk_buff *skb, __u8 direction) 
         if ((ip6h.vtc_flow >> 28) != 6) return;
 
         ev->family = FAM_INET6;
-        ev->protocol = ip6h.next_header;
         __builtin_memcpy(ev->src_addr6, ip6h.saddr, 16);
         __builtin_memcpy(ev->dst_addr6, ip6h.daddr, 16);
 
-        if (ip6h.next_header == PROTO_TCP || ip6h.next_header == PROTO_UDP || ip6h.next_header == PROTO_SCTP) {
+        // Walk a bounded IPv6 extension-header chain so TCP/UDP/SCTP ports
+        // remain visible when hop-by-hop, routing, destination, fragment or
+        // authentication headers precede the transport header.
+        __u8 next = ip6h.next_header;
+        __u32 cursor = sizeof(ip6h);
+        #pragma unroll
+        for (int i = 0; i < 8; i++) {
+            if (next == PROTO_TCP || next == PROTO_UDP || next == PROTO_SCTP ||
+                next == PROTO_ICMPV6) break;
+            if (next == 44) { // Fragment header: fixed 8 bytes.
+                __u8 nhdr = 0;
+                if (bpf_probe_read_kernel(&nhdr, sizeof(nhdr), nh + cursor) != 0) break;
+                next = nhdr;
+                cursor += 8;
+                continue;
+            }
+            if (next == 0 || next == 43 || next == 60 || next == 51) {
+                __u8 hdr[2] = {};
+                if (bpf_probe_read_kernel(hdr, sizeof(hdr), nh + cursor) != 0) break;
+                __u32 hdr_len = next == 51 ? ((__u32)hdr[1] + 2) * 4 : ((__u32)hdr[1] + 1) * 8;
+                if (hdr_len < 8 || hdr_len > 256) break;
+                next = hdr[0];
+                cursor += hdr_len;
+                continue;
+            }
+            break;
+        }
+        ev->protocol = next;
+        if (next == PROTO_TCP || next == PROTO_UDP || next == PROTO_SCTP) {
             __u16 ports[2] = {};
-            if (bpf_probe_read_kernel(ports, sizeof(ports), nh + sizeof(ip6h)) == 0) {
+            if (bpf_probe_read_kernel(ports, sizeof(ports), nh + cursor) == 0) {
                 ev->src_port = bpf_ntohs(ports[0]);
                 ev->dst_port = bpf_ntohs(ports[1]);
             }
