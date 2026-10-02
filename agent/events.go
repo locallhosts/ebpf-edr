@@ -7,50 +7,65 @@ import (
     "strings"
 )
 
-// Event type tags — MUST match bpf/monitor.bpf.c #define EVT_* exactly.
+// Event type tags — MUST match bpf/monitor.bpf.c.
 const (
-    EvtExec      uint32 = 1
-    EvtOpen      uint32 = 2
-    EvtConnect   uint32 = 3
-    EvtPtrace    uint32 = 4
-    EvtMprotect  uint32 = 5 // NEW
-    EvtVmWritev  uint32 = 6 // NEW
+    EvtExec         uint32 = 1
+    EvtOpen         uint32 = 2
+    EvtConnect      uint32 = 3
+    EvtPtrace       uint32 = 4
+    EvtMprotect     uint32 = 5
+    EvtVmWritev     uint32 = 6
+    EvtAccept       uint32 = 7
+    EvtListen       uint32 = 8
+    EvtModuleLoad   uint32 = 9
+    EvtBPF          uint32 = 10
+    EvtPrivEsc      uint32 = 11
+    EvtMemFD        uint32 = 12
+    EvtSocketCreate uint32 = 13
+    EvtUnlink       uint32 = 14
+    EvtSetNS        uint32 = 15
 )
 
-// Alert flag constants — MUST match bpf/monitor.bpf.c #define ALERT_* exactly.
 const (
-    AlertNone                uint32 = 0
-    AlertReverseShellLikely  uint32 = 1 << 0
-    AlertLdPreloadFound      uint32 = 1 << 1
-    AlertWxBypass            uint32 = 1 << 2
-    AlertCrossProcessInject  uint32 = 1 << 3
+    AlertNone                 uint32 = 0
+    AlertReverseShellLikely   uint32 = 1 << 0
+    AlertLdPreloadFound       uint32 = 1 << 1
+    AlertWxBypass             uint32 = 1 << 2
+    AlertCrossProcessInject   uint32 = 1 << 3
+    AlertBindShellLikely      uint32 = 1 << 4
+    AlertUnexpectedListener   uint32 = 1 << 5
+    AlertKernelModuleLoad     uint32 = 1 << 6
+    AlertUnauthorizedBPF      uint32 = 1 << 7
+    AlertPrivEscToRoot        uint32 = 1 << 8
+    AlertPersistenceWrite     uint32 = 1 << 9
+    AlertFilelessExec         uint32 = 1 << 10
+    AlertRawSocket            uint32 = 1 << 11
+    AlertSelfDelete           uint32 = 1 << 12
+    AlertNamespaceManipulation uint32 = 1 << 13
 )
 
 const (
+    FamilyIPv4 = 2
+    FamilyIPv6 = 10
+
+    ProtocolICMP   = 1
+    ProtocolTCP    = 6
+    ProtocolUDP    = 17
+    ProtocolICMPv6 = 58
+    ProtocolSCTP   = 132
+)
+
+const (
+    DirectionOutbound uint8 = 0
+    DirectionInbound  uint8 = 1
+
     taskCommLen    = 16
     maxFilenameLen = 256
     maxArgsLen     = 128
 )
 
-// rawEvent mirrors `struct event` in bpf/monitor.bpf.c byte-for-byte.
-type rawEvent struct {
-    TimestampNs uint64
-    Pid         uint32
-    Tgid        uint32
-    Ppid        uint32
-    Uid         uint32
-    Type        uint32
-    AlertFlags  uint32 // NEW: Inserted right after Type
-    Comm        [taskCommLen]byte
-    Filename    [maxFilenameLen]byte
-    Argv0       [maxArgsLen]byte
-    DstAddr     uint32
-    DstPort     uint16
-    _           uint16 // padding to keep TargetPid 4-byte aligned
-    TargetPid   uint32
-}
-
-// Event is the decoded, Go-friendly representation.
+// Event mirrors struct event in bpf/monitor.bpf.c.
+// The parser intentionally follows the kernel ABI field-by-field.
 type Event struct {
     TimestampNs uint64
     Pid         uint32
@@ -58,56 +73,113 @@ type Event struct {
     Ppid        uint32
     Uid         uint32
     Type        uint32
-    AlertFlags  uint32 // NEW
+    AlertFlags  uint32
     Comm        string
     Filename    string
     Argv0       string
-    DstAddr     net.IP
-    DstPort     uint16
-    TargetPid   uint32
+
+    DstAddr  net.IP
+    DstAddr6 net.IP
+    SrcAddr  net.IP
+    SrcAddr6 net.IP
+    DstPort  uint16
+    SrcPort  uint16
+    TargetPid uint32
+
+    Family    uint8
+    Protocol  uint8
+    Direction uint8
+
+    OldUID     uint32
+    NewUID     uint32
+    SockFamily uint32
+    SockType   uint32
 }
 
 func (e Event) TypeName() string {
     switch e.Type {
-    case EvtExec:
-        return "EXEC"
-    case EvtOpen:
-        return "OPEN"
-    case EvtConnect:
-        return "CONNECT"
-    case EvtPtrace:
-        return "PTRACE"
-    case EvtMprotect:
-        return "MPROTECT" // NEW
-    case EvtVmWritev:
-        return "VM_WRITEV" // NEW
-    default:
-        return "UNKNOWN"
+    case EvtExec:         return "EXEC"
+    case EvtOpen:         return "OPEN"
+    case EvtConnect:      return "CONNECT"
+    case EvtPtrace:       return "PTRACE"
+    case EvtMprotect:     return "MPROTECT"
+    case EvtVmWritev:     return "VM_WRITEV"
+    case EvtAccept:       return "ACCEPT"
+    case EvtListen:       return "LISTEN"
+    case EvtModuleLoad:   return "MODULE_LOAD"
+    case EvtBPF:          return "BPF_LOAD"
+    case EvtPrivEsc:      return "PRIVESC"
+    case EvtMemFD:        return "MEMFD"
+    case EvtSocketCreate: return "SOCKET"
+    case EvtUnlink:       return "UNLINK"
+    case EvtSetNS:        return "SETNS"
+    default:              return "UNKNOWN"
     }
 }
 
-// DecodeAlerts translates the kernel-space bitmask into a readable string.
+func (e Event) ProtocolName() string {
+    switch e.Protocol {
+    case ProtocolICMP:   return "ICMP"
+    case ProtocolTCP:    return "TCP"
+    case ProtocolUDP:    return "UDP"
+    case ProtocolICMPv6: return "ICMPv6"
+    case ProtocolSCTP:   return "SCTP"
+    case 0:              return "UNKNOWN"
+    default:             return fmt.Sprintf("IP/%d", e.Protocol)
+    }
+}
+
+func (e Event) FamilyName() string {
+    switch e.Family {
+    case FamilyIPv4: return "IPv4"
+    case FamilyIPv6: return "IPv6"
+    default:         return "AF_UNKNOWN"
+    }
+}
+
+func (e Event) DirectionName() string {
+    if e.Direction == DirectionInbound {
+        return "INBOUND"
+    }
+    return "OUTBOUND"
+}
+
+func (e Event) NetworkEvent() bool {
+    return e.Type == EvtConnect || e.Type == EvtAccept || e.Type == EvtListen
+}
+
 func (e Event) DecodeAlerts() string {
     if e.AlertFlags == AlertNone {
         return "NONE"
     }
+    checks := []struct {
+        flag uint32
+        name string
+    }{
+        {AlertReverseShellLikely, "REVERSE_SHELL_LIKELY"},
+        {AlertLdPreloadFound, "LD_PRELOAD_FOUND"},
+        {AlertWxBypass, "WX_BYPASS"},
+        {AlertCrossProcessInject, "CROSS_PROCESS_INJECT"},
+        {AlertBindShellLikely, "BIND_SHELL_LIKELY"},
+        {AlertUnexpectedListener, "UNEXPECTED_LISTENER"},
+        {AlertKernelModuleLoad, "KERNEL_MODULE_LOAD"},
+        {AlertUnauthorizedBPF, "UNAUTHORIZED_BPF"},
+        {AlertPrivEscToRoot, "PRIVESC_TO_ROOT"},
+        {AlertPersistenceWrite, "PERSISTENCE_WRITE"},
+        {AlertFilelessExec, "FILELESS_EXEC"},
+        {AlertRawSocket, "RAW_SOCKET"},
+        {AlertSelfDelete, "SELF_DELETE"},
+        {AlertNamespaceManipulation, "NAMESPACE_MANIPULATION"},
+    }
     var alerts []string
-    if e.AlertFlags&AlertReverseShellLikely != 0 {
-        alerts = append(alerts, "REVERSE_SHELL_LIKELY")
-    }
-    if e.AlertFlags&AlertLdPreloadFound != 0 {
-        alerts = append(alerts, "LD_PRELOAD_FOUND")
-    }
-    if e.AlertFlags&AlertWxBypass != 0 {
-        alerts = append(alerts, "WX_BYPASS")
-    }
-    if e.AlertFlags&AlertCrossProcessInject != 0 {
-        alerts = append(alerts, "CROSS_PROCESS_INJECT")
+    for _, c := range checks {
+        if e.AlertFlags&c.flag != 0 {
+            alerts = append(alerts, c.name)
+        }
     }
     return strings.Join(alerts, ", ")
 }
 
-// IsMalicious is a helper for the Go detection engine to quickly filter
 func (e Event) IsMalicious() bool {
     return e.AlertFlags != AlertNone
 }
@@ -121,36 +193,32 @@ func cString(b []byte) string {
     return string(b)
 }
 
-// parseEvent decodes a raw ring buffer record into an Event.
+func ipv4FromRaw(v uint32) net.IP {
+    return net.IPv4(byte(v), byte(v>>8), byte(v>>16), byte(v>>24))
+}
+
+func ipv6FromRaw(b []byte) net.IP {
+    if len(b) != net.IPv6len {
+        return nil
+    }
+    out := make(net.IP, net.IPv6len)
+    copy(out, b)
+    return out
+}
+
+// parseEvent decodes the current v4 event ABI (504 bytes on 64-bit Linux).
 func parseEvent(raw []byte) (Event, error) {
-    // Updated expected size: 8 (ts) + 6*4 (uint32s) + 16 + 256 + 128 + 4 + 2 + 2 (pad) + 4
-    // = 8 + 24 + 400 + 8 = 440 bytes
-    const expectedSize = 8 + 4*6 + taskCommLen + maxFilenameLen + maxArgsLen + 4 + 2 + 2 + 4
+    const expectedSize = 504
     if len(raw) < expectedSize {
         return Event{}, fmt.Errorf("short ring buffer record: got %d bytes, want >= %d", len(raw), expectedSize)
     }
 
     off := 0
-    readU64 := func() uint64 {
-        v := binary.LittleEndian.Uint64(raw[off:])
-        off += 8
-        return v
-    }
-    readU32 := func() uint32 {
-        v := binary.LittleEndian.Uint32(raw[off:])
-        off += 4
-        return v
-    }
-    readU16 := func() uint16 {
-        v := binary.LittleEndian.Uint16(raw[off:])
-        off += 2
-        return v
-    }
-    readBytes := func(n int) []byte {
-        b := raw[off : off+n]
-        off += n
-        return b
-    }
+    readU64 := func() uint64 { v := binary.LittleEndian.Uint64(raw[off:]); off += 8; return v }
+    readU32 := func() uint32 { v := binary.LittleEndian.Uint32(raw[off:]); off += 4; return v }
+    readU16 := func() uint16 { v := binary.LittleEndian.Uint16(raw[off:]); off += 2; return v }
+    readU8 := func() uint8 { v := raw[off]; off++; return v }
+    readBytes := func(n int) []byte { b := raw[off:off+n]; off += n; return b }
 
     ev := Event{}
     ev.TimestampNs = readU64()
@@ -159,22 +227,40 @@ func parseEvent(raw []byte) (Event, error) {
     ev.Ppid = readU32()
     ev.Uid = readU32()
     ev.Type = readU32()
-    ev.AlertFlags = readU32() // NEW: Read the alert bitmask
+    ev.AlertFlags = readU32()
     ev.Comm = cString(readBytes(taskCommLen))
     ev.Filename = cString(readBytes(maxFilenameLen))
     ev.Argv0 = cString(readBytes(maxArgsLen))
 
-    dstAddrRaw := readU32()
-    // skc_daddr is stored network-byte-order in the kernel already.
-    addrBytes := make([]byte, 4)
-    binary.BigEndian.PutUint32(addrBytes, binary.BigEndian.Uint32([]byte{
-        byte(dstAddrRaw), byte(dstAddrRaw >> 8), byte(dstAddrRaw >> 16), byte(dstAddrRaw >> 24),
-    }))
-    ev.DstAddr = net.IPv4(addrBytes[0], addrBytes[1], addrBytes[2], addrBytes[3])
-
+    ev.DstAddr = ipv4FromRaw(readU32())
     ev.DstPort = readU16()
-    _ = readU16() // padding
+    _ = readU16()
     ev.TargetPid = readU32()
+
+    ev.Family = readU8()
+    ev.Protocol = readU8()
+    ev.Direction = readU8()
+    _ = readU8()
+
+    ev.DstAddr6 = ipv6FromRaw(readBytes(16))
+    ev.SrcAddr = ipv4FromRaw(readU32())
+    ev.SrcAddr6 = ipv6FromRaw(readBytes(16))
+    ev.SrcPort = readU16()
+    _ = readU16()
+
+    ev.OldUID = readU32()
+    ev.NewUID = readU32()
+    ev.SockFamily = readU32()
+    ev.SockType = readU32()
+
+    if ev.Family != FamilyIPv4 {
+        ev.DstAddr = nil
+        ev.SrcAddr = nil
+    }
+    if ev.Family != FamilyIPv6 {
+        ev.DstAddr6 = nil
+        ev.SrcAddr6 = nil
+    }
 
     return ev, nil
 }
