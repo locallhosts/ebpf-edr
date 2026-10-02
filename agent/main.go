@@ -89,7 +89,7 @@ func main() {
         ticker := time.NewTicker(2 * time.Second)
         defer ticker.Stop()
         for range ticker.C {
-            ringbufLoss.Add(float64(probes.RingbufDrops()) - float64(ringbufLossValue()))
+            probes.ObserveRingbufDrops()
         }
     }()
 
