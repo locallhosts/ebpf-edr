@@ -62,7 +62,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(go list -m)" = "github.com/locallhosts/ebpf-edr"
-          if git grep -n "github.com/portfolio/ebpf-edr" -- . ':!go.sum'; then
+
+          if git grep -n "github.com/portfolio/ebpf-edr" -- ':!.github/workflows/build.yml'; then
             echo "Found stale tracked module references"
             exit 1
           fi
@@ -103,7 +104,8 @@ jobs:
           tar -C dist/arm64 -czf "dist/ebpf-edr-${VERSION}-linux-arm64.tar.gz" edr-agent
 
           cd dist
-          sha256sum "ebpf-edr-${VERSION}-linux-amd64.tar.gz"                     "ebpf-edr-${VERSION}-linux-arm64.tar.gz" > SHA256SUMS
+          sha256sum "ebpf-edr-${VERSION}-linux-amd64.tar.gz" \
+                    "ebpf-edr-${VERSION}-linux-arm64.tar.gz" > SHA256SUMS
 
           ls -lh .
 
