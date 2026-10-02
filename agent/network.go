@@ -38,7 +38,7 @@ func (s *NetworkStore) Add(ev Event) {
     }
 
     flow := NetworkFlow{
-        Time: time.Unix(0, int64(ev.TimestampNs)), Pid: ev.Pid, Ppid: ev.Ppid, Comm: ev.Comm,
+        Time: time.Now(), Pid: ev.Pid, Ppid: ev.Ppid, Comm: ev.Comm,
         EventType: ev.TypeName(), Family: ev.FamilyName(),
         Protocol: ev.ProtocolName(), Direction: ev.DirectionName(),
         SrcAddr: ipString(ev.SrcAddr, ev.SrcAddr6), SrcPort: ev.SrcPort,
