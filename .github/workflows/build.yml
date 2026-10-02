@@ -19,12 +19,22 @@ jobs:
       - name: Install eBPF build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm libbpf-dev libelf-dev linux-tools-common linux-tools-generic
-          sudo apt-get install -y "linux-tools-$(uname -r)" || true
+          sudo apt-get install -y clang llvm libbpf-dev libelf-dev linux-tools-common
+          case "$(uname -r)" in
+            *azure*) sudo apt-get install -y linux-tools-azure ;;
+            *lowlatency*) sudo apt-get install -y linux-lowlatency-tools-common || true ;;
+            *) sudo apt-get install -y linux-tools-generic ;;
+          esac
           if ! command -v bpftool >/dev/null 2>&1; then
-            sudo ln -sf /usr/lib/linux-tools/*/bpftool /usr/local/bin/bpftool 2>/dev/null || true
+            for p in /usr/lib/linux-tools/*/bpftool /usr/lib/linux-tools-*/bpftool; do
+              if [ -x "$p" ]; then
+                sudo ln -sf "$p" /usr/local/bin/bpftool
+                break
+              fi
+            done
           fi
-          command -v bpftool || { echo "bpftool installation failed"; apt-cache policy linux-tools-common linux-tools-generic; exit 1; }
+          command -v bpftool
+          bpftool version
 
       - name: Build eBPF object
         run: make bpf
