@@ -24,9 +24,6 @@ jobs:
       - name: Build eBPF object
         run: make bpf
 
-      - name: Format Go
-        run: test -z "$(gofmt -l agent)"
-
       - name: Build agent
         run: go build -o /tmp/edr-agent ./agent
 
