@@ -689,6 +689,8 @@ int BPF_KPROBE(trace_udpv6_sendmsg, struct sock *sk, struct msghdr *msg) {
         BPF_CORE_READ_INTO(&dst_port, sk, __sk_common.skc_dport);
         ev->dst_port = bpf_ntohs(dst_port);
     }
+    BPF_CORE_READ_INTO(&ev->src_addr6, sk, __sk_common.skc_v6_rcv_saddr.in6_u.u6_addr8);
+    BPF_CORE_READ_INTO(&ev->src_port, sk, __sk_common.skc_num);
 
     __u32 tgid = ev->tgid;
     char *saved_comm = bpf_map_lookup_elem(&exec_history, &tgid);
