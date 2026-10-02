@@ -664,7 +664,7 @@ Potential future improvements include:
 * [ ] Improve JIT/W^X contextual detection
 * [ ] Add container-aware detection
 * [ ] Add automated integration tests
-* [ ] Add GitHub Actions CI
+* [x] Add GitHub Actions CI
 * [ ] Add reproducible performance benchmarks
 * [ ] Add event-loss stress testing
 * [x] IPv4/IPv6 TCP telemetry
