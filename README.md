@@ -1,256 +1,433 @@
-# Sentinel-eBPF: Kernel-Level Threat Detection for Linux
+# Sentinel-eBPF — Linux Kernel Threat Detection & Network Telemetry
 
-> **Status:** Research / Security Engineering Project
-> **Architecture:** eBPF (C) + Go Userspace Agent + React/TypeScript Dashboard
-> **Platform:** Linux
-> **Author:** [locallhosts](https://github.com/locallhosts)
+> **Status:** Research / Security Engineering Project  
+> **Architecture:** eBPF/C + Go userspace agent + React/TypeScript dashboard  
+> **Platform:** Linux  
+> **Repository:** `locallhosts/ebpf-edr`
 
 ![Live Demo - Terminal Alert](docs/assets/live-demo.gif)
 
-Sentinel-eBPF is a Linux security monitoring and detection project built around **eBPF**.
+Sentinel-eBPF is a Linux security monitoring and detection-engineering project built around **eBPF**. It collects selected security-relevant activity close to the Linux kernel, transfers structured events through a BPF ring buffer, normalizes and correlates them in Go, and exposes security alerts and network telemetry through REST APIs and a React/TypeScript SOC-style dashboard.
 
-The goal is to collect security-relevant telemetry at the kernel level rather than relying exclusively on traditional userland API hooks. The project combines eBPF-based telemetry, a Go detection engine, and a React/TypeScript SOC-style dashboard to turn low-level Linux events into actionable security alerts.
+The current implementation covers process and file activity, memory and cross-process operations, privilege and kernel-related signals, socket creation, TCP/UDP telemetry, and generic IPv4/IPv6 packet metadata.
 
-> **Note:** Sentinel-eBPF is a research and security engineering project, not a claim of complete or production-grade EDR coverage. Detection rules are intentionally focused on a limited set of behaviors and should be evaluated in the context of the target environment.
+> **Important:** This is a research/security-engineering implementation, not a claim of complete or production-certified EDR coverage. Detections are behavioral signals and must be interpreted in context.
 
 ---
 
-## Why eBPF?
+## Contents
 
-Many userland monitoring approaches depend on hooking APIs provided by libraries such as `libc`. Applications can sometimes avoid those hooks by making system calls directly or by using alternative execution paths.
+- [Why eBPF?](#why-ebpf)
+- [Architecture](#architecture)
+- [Architecture Diagram](#architecture-diagram)
+- [Kernel Telemetry](#kernel-telemetry)
+- [Network Telemetry](#network-telemetry)
+- [Event ABI](#event-abi)
+- [Userspace Agent](#userspace-agent)
+- [Detection Engineering](#detection-engineering)
+- [Detection Coverage](#detection-coverage)
+- [SOC Dashboard](#soc-dashboard)
+- [Live Evidence](#live-evidence)
+- [Build & Run](#build--run)
+- [Continuous Integration](#continuous-integration)
+- [Security Model & Limitations](#security-model--limitations)
+- [Repository Structure](#repository-structure)
+- [Roadmap](#roadmap)
 
-Sentinel-eBPF moves a portion of the telemetry collection closer to the kernel, allowing the agent to observe selected system and networking activity independently of the normal userland API path.
+---
 
-The project currently focuses on:
+# Why eBPF?
 
-* Process execution
-* Sensitive file access
-* Memory protection changes
-* Cross-process memory operations
-* `ptrace()` activity
-* Environment-variable based injection indicators
-* IPv4/IPv6 TCP connections
-* IPv4/IPv6 UDP traffic
-* Socket creation telemetry for ICMP, ICMPv6, SCTP, raw and other IP protocols
-* Process ancestry
-* Stateful behavioral correlations
+Userspace monitoring can depend on library- or application-level observation. Applications may bypass some of those observation points by making syscalls directly or using alternate execution paths.
 
-The objective is not to claim that eBPF makes telemetry impossible to evade. Instead, it provides a different observation point that reduces reliance on userland hooks and makes certain classes of bypass more difficult.
+Sentinel-eBPF moves selected telemetry collection closer to the Linux kernel. This provides a different observation point and reduces exclusive reliance on userspace API hooks.
+
+The current implementation focuses on:
+
+- Process execution
+- Sensitive file access and persistence-sensitive writes
+- `ptrace()`
+- `mprotect()` and writable + executable memory
+- Cross-process memory writes
+- `LD_PRELOAD` indicators
+- Fileless execution indicators
+- Privilege transitions to root
+- Kernel module loading
+- eBPF program loading
+- Namespace manipulation
+- Process self-deletion
+- Raw/packet socket creation
+- IPv4/IPv6 TCP connections
+- IPv4/IPv6 UDP activity
+- TCP accept/listener activity
+- Generic IPv4/IPv6 packet metadata
+- Stateful process/network correlations
+
+The goal is not to claim that eBPF is impossible to evade. The goal is to demonstrate a practical kernel-to-detection security telemetry pipeline.
 
 ---
 
 # Architecture
 
 ```text
-                         Linux Kernel
-                              │
-                    ┌─────────┴─────────┐
-                    │     eBPF / C      │
-                    │                   │
-                    │ Tracepoints       │
-                    │ Kprobes           │
-                    │ BPF Maps          │
-                    └─────────┬─────────┘
-                              │
-                         BPF Ring Buffer
-                              │
-                              ▼
-                     ┌─────────────────┐
-                     │    Go Agent     │
-                     │                 │
-                     │ Event decoding  │
-                     │ Enrichment      │
-                     │ Correlation     │
-                     │ Detection       │
-                     │ Metrics         │
-                     │ REST API        │
-                     └────────┬────────┘
-                              │
-                   ┌──────────┴──────────┐
-                   │                     │
-                   ▼                     ▼
-              Prometheus           React / TS
-                                      SOC UI
+                         Linux Host
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │   Linux Kernel  │
+                    │                 │
+                    │ eBPF / C        │
+                    │ Tracepoints     │
+                    │ Kprobes         │
+                    │ Kretprobes      │
+                    │ BPF Maps        │
+                    │ Ring Buffer     │
+                    └────────┬────────┘
+                             │
+                       kernel events
+                             ▼
+                    ┌─────────────────┐
+                    │    Go Agent     │
+                    │                 │
+                    │ ABI decoding    │
+                    │ Normalization   │
+                    │ State           │
+                    │ Correlation     │
+                    │ Detection       │
+                    │ Metrics         │
+                    │ REST API        │
+                    └───────┬─────────┘
+                            │
+                 ┌──────────┴──────────┐
+                 │                     │
+                 ▼                     ▼
+          /api/alerts             /api/network
+                 │                     │
+                 └──────────┬──────────┘
+                            ▼
+                   React / TypeScript
+                       SOC Dashboard
 ```
 
-The system is divided into three main components.
+The architecture deliberately separates:
+
+1. **Collection** — kernel/eBPF instrumentation.
+2. **Transport** — BPF ring buffer.
+3. **Normalization** — Go event decoding.
+4. **Correlation** — bounded process/network state.
+5. **Detection** — behavioral security rules.
+6. **Presentation** — REST API and dashboard.
+
+## Components
+
+### Kernel layer
+
+`bpf/monitor.bpf.c` contains the eBPF programs and security/network instrumentation.
+
+### Go agent
+
+`agent/` loads the embedded eBPF object, attaches probes, decodes events, correlates behavior, stores bounded network telemetry, and serves the API.
+
+### Dashboard
+
+`dashboard/` contains the React/TypeScript security UI.
 
 ---
 
-## 1. Kernel Telemetry — eBPF / C
+# Architecture Diagram
 
-The kernel-side programs live in:
+The repository includes a dedicated system architecture diagram:
 
-```text
-bpf/monitor.bpf.c
-```
-
-The project uses **BPF Type Format (BTF)** and CO-RE techniques to reduce dependency on a single kernel build.
-
-### Tracepoints
-
-Sentinel-eBPF currently observes selected system calls through tracepoints, including:
-
-* `execve`
-* `openat`
-* `ptrace`
-* `mprotect`
-* `process_vm_writev`
-
-Tracepoints provide a relatively stable instrumentation interface compared with depending on specific kernel function implementations.
-
-### Kprobes
-
-The project uses protocol-specific network kprobes for both IPv4 and IPv6. TCP connection attempts are observed through `tcp_v4_connect` / `tcp_v6_connect`, while UDP datagrams are observed through `udp_sendmsg` / `udpv6_sendmsg`. TCP accept/listen activity is also collected.
-
-Socket creation is monitored separately through the `socket()` syscall. This records the address family, socket type, and IP protocol identifier, allowing the agent to identify ICMP, ICMPv6, SCTP, raw/packet sockets, and other protocols even when they do not use TCP-style connection semantics.
-
-Network telemetry is metadata-only: the agent records process, protocol, addresses and ports where available, but does not capture packet payloads.
-
-### BPF Maps
-
-BPF maps are used to maintain limited state needed for behavioral correlation.
-
-For example, process execution information can be associated with a PID and later used when another event is observed from that process.
-
-This allows the project to identify patterns that cannot be detected reliably from isolated events.
-
-### Verifier Constraints
-
-One of the more challenging parts of developing the eBPF programs was working within the constraints imposed by the eBPF verifier.
-
-The kernel-side code uses bounded and verifier-safe operations when processing data such as process arguments and environment variables.
-
-For example, the project checks for indicators such as:
-
-```text
-LD_PRELOAD
-```
-
-during process execution.
+![Sentinel-eBPF Architecture](docs/assets/architecture.png)
 
 ---
 
-# 2. Userspace Agent — Go
+# Kernel Telemetry
 
-The userspace agent lives under:
+The kernel implementation uses:
+
+- eBPF
+- BTF
+- CO-RE-compatible kernel reads
+- Tracepoints
+- Kprobes
+- Kretprobes
+- BPF maps
+- BPF ring buffers
+
+## Required tracepoints
+
+The current loader treats these core syscall tracepoints as required:
+
+- `sys_enter_execve`
+- `sys_enter_openat`
+- `sys_enter_ptrace`
+- `sys_enter_mprotect`
+- `sys_enter_process_vm_writev`
+
+## Optional security tracepoints
+
+Loaded when available:
+
+- `sys_enter_init_module`
+- `sys_enter_finit_module`
+- `sys_enter_bpf`
+- `sys_enter_memfd_create`
+- `sys_enter_socket`
+- `sys_enter_unlinkat`
+- `sys_enter_setns`
+
+Optional probes are non-fatal so one unavailable kernel hook does not prevent the agent from using the rest of the telemetry.
+
+## Optional network/security probes
+
+The loader attempts:
+
+- `tcp_v4_connect`
+- `tcp_v6_connect`
+- `udp_sendmsg`
+- `udpv6_sendmsg`
+- `inet_csk_accept`
+- `inet_csk_listen_start`
+- `ip_rcv`
+- `ip6_rcv`
+- `ip_output`
+- `ip6_finish_output2`
+- `commit_creds`
+
+Kernel symbols vary between distributions and kernel versions, so these probes are intentionally optional.
+
+---
+
+# Network Telemetry
+
+Network visibility combines socket-level telemetry with generic IPv4/IPv6 packet metadata.
+
+## TCP
+
+Outbound IPv4/IPv6 connections:
 
 ```text
-agent/
+tcp_v4_connect
+tcp_v6_connect
 ```
 
-The Go agent is responsible for consuming kernel events and turning them into higher-level security events.
-
-### Ring Buffer
-
-Events are transferred from the eBPF programs through a:
+Inbound connections:
 
 ```text
-BPF_MAP_TYPE_RINGBUF
+inet_csk_accept
 ```
 
-The Go agent consumes these records and decodes the shared event structure defined by the project.
-
-This provides an efficient kernel-to-userspace event path while avoiding the need for every event to be handled through a traditional syscall interface.
-
-### Detection Engine
-
-The main detection and correlation logic is implemented in:
+Listener creation:
 
 ```text
-agent/detect.go
+inet_csk_listen_start
 ```
 
-The detection engine can combine individual events into higher-level behaviors.
+## UDP
 
-Examples include:
+IPv4/IPv6 UDP send activity:
 
 ```text
-Web server
-    ↓
-Shell execution
-    ↓
-Outbound connection
-    ↓
-Potential reverse-shell behavior
+udp_sendmsg
+udpv6_sendmsg
 ```
 
-and:
+## Generic IPv4/IPv6 packet telemetry
+
+The generic path uses:
+
+```text
+ip_rcv
+ip6_rcv
+ip_output
+ip6_finish_output2
+```
+
+The common packet path can:
+
+- Identify IPv4 versus IPv6.
+- Record the IP protocol number.
+- Record packet length.
+- Extract source/destination addresses.
+- Extract TCP/UDP/SCTP ports when applicable.
+- Record direction.
+- Emit metadata without capturing payloads.
+
+### Protocol representation
+
+| Protocol | Number |
+|---|---:|
+| ICMP | 1 |
+| TCP | 6 |
+| UDP | 17 |
+| ICMPv6 | 58 |
+| SCTP | 132 |
+| Other IP protocols | `IP/<number>` |
+
+## Socket creation
+
+`sys_enter_socket` records address family, socket type, protocol, and process context.
+
+This gives visibility into protocol families that do not use TCP-style connection semantics and supports signals for raw/packet socket creation.
+
+A raw socket is a security signal, not automatic proof of malicious activity; legitimate diagnostics and security tooling can use these APIs.
+
+## Network event model
+
+Network records can contain:
+
+```text
+time
+PID / PPID
+process
+event type
+family
+protocol
+direction
+source address / port
+destination address / port
+packet length
+```
+
+The network store is bounded, so telemetry does not grow without limit in memory.
+
+## Network coverage boundary
+
+The generic packet path is **IPv4/IPv6 Layer-3 oriented**, not complete Ethernet/L2 capture.
+
+It does not provide universal visibility into ARP, LLDP, Ethernet-only frames, or every VLAN/L2 protocol. Additional XDP/TC or another suitable L2 sensor would be required for that.
+
+The current IPv6 parser does not walk arbitrary extension-header chains; it records the immediate `next_header` value.
+
+Socket-level and packet-level hooks can observe related activity, so duplicate network records are possible. Event correlation/deduplication is a future improvement.
+
+## Payload boundary
+
+Packet payloads are not captured by the generic network telemetry path. The design intentionally focuses on endpoint/network metadata rather than packet-content inspection.
+
+---
+
+# Event ABI
+
+Kernel events are transferred through a BPF ring buffer and decoded field-by-field by `agent/events.go`.
+
+Current event types:
+
+| ID | Event |
+|---:|---|
+| 1 | `EXEC` |
+| 2 | `OPEN` |
+| 3 | `CONNECT` |
+| 4 | `PTRACE` |
+| 5 | `MPROTECT` |
+| 6 | `VM_WRITEV` |
+| 7 | `ACCEPT` |
+| 8 | `LISTEN` |
+| 9 | `MODULE_LOAD` |
+| 10 | `BPF_LOAD` |
+| 11 | `PRIVESC` |
+| 12 | `MEMFD` |
+| 13 | `SOCKET` |
+| 14 | `UNLINK` |
+| 15 | `SETNS` |
+| 16 | `PACKET` |
+
+The event structure carries process identity, execution context, alert flags, IPv4/IPv6 addresses, ports, target PID, family, protocol, direction, credential fields, socket fields, and packet length.
+
+### Event ABI visual reference
+
+![Sentinel-eBPF Event ABI](docs/assets/eventabi.png)
+
+The ABI is a contract between the C/eBPF layer and Go. Changes to its field layout require coordinated kernel/userspace updates.
+
+---
+
+# Userspace Agent
+
+The Go agent in `agent/` is responsible for:
+
+1. Loading the embedded eBPF object.
+2. Removing the required memlock restriction.
+3. Attaching required and optional probes.
+4. Reading the ring buffer.
+5. Decoding the event ABI.
+6. Maintaining bounded process correlation state.
+7. Running detection logic.
+8. Maintaining bounded network telemetry.
+9. Exposing REST endpoints.
+10. Exporting Prometheus metrics.
+
+The loader explicitly distinguishes required tracepoints from optional probes, improving compatibility across Linux kernels.
+
+---
+
+# Detection Engineering
+
+Detection logic is primarily implemented in `agent/detect.go`.
+
+The detector maintains bounded process execution state and correlates later events within short time windows.
+
+The design principle is:
+
+> **Telemetry is evidence, not a verdict.**
+
+Example:
+
+```text
+Process execution
+      ↓
+Shell/interpreter
+      ↓
+Recent execution state
+      ↓
+Outbound network connection
+      ↓
+Behavioral correlation
+      ↓
+REVERSE_SHELL_LIKELY
+```
+
+Another:
 
 ```text
 Process A
-    ↓
-Cross-process memory operation
-    ↓
-Potential process injection
+   ↓
+process_vm_writev()
+   ↓
+Process B
+   ↓
+CROSS_PROCESS_INJECT
 ```
-
-### Metrics
-
-The agent exposes Prometheus-compatible metrics through:
-
-```text
-/metrics
-```
-
-These metrics can be used to monitor things such as event processing and ring-buffer behavior.
-
-### REST API
-
-Structured alerts are exposed through:
-
-```text
-/api/alerts
-```
-
-This provides the frontend with a simple interface for displaying detected activity.
-
----
-
-# 3. SOC Dashboard — React / TypeScript
-
-The dashboard lives under:
-
-```text
-dashboard/
-```
-
-It provides a lightweight SOC-style interface for viewing alerts generated by the Go agent.
-
-Current functionality includes:
-
-* Real-time alert polling
-* Severity filtering
-* Alert details
-* MITRE ATT&CK technique mapping
-* Event timestamps
-* Process information
-* Security event classification
-
-The dashboard is intentionally simple so that the focus remains on the underlying detection pipeline.
 
 ---
 
 # Detection Coverage
 
-The current detection set focuses on several Linux behaviors that can be useful as security signals.
+| Rule | ATT&CK | Severity | Signal |
+|---|---|---:|---|
+| `wx-memory-bypass` | T1055* | Critical | Writable + executable memory via `mprotect()` |
+| `cross-process-memory-write` | T1055.009 | Critical | Cross-process `process_vm_writev()` |
+| `reverse-shell-pattern` | T1059 | Critical | Shell/interpreter + outbound network correlation |
+| `bind-shell-pattern` | T1059 | Critical | Shell process accepting inbound connection |
+| `ld-preload-injection` | T1574.006 | High | `LD_PRELOAD` execution indicator |
+| `shell-from-webserver` | T1059.004 | High | Shell execution associated with selected web servers |
+| `unexpected-ptrace` | T1055 | High | `ptrace()` outside known debugger process names |
+| `unexpected-listener` | T1571 | High | Selected shell/interpreter listener behavior |
+| `kernel-module-load` | T1014* | Critical | Kernel module load signal |
+| `bpf-program-load` | T1547* | High | eBPF program load signal |
+| `privilege-escalation-to-root` | T1548 | Critical | Credential transition to root |
+| `persistence-write` | T1053/T1547* | High | Persistence-sensitive write |
+| `fileless-execution` | T1620 | Critical | Fileless execution correlation |
+| `raw-or-packet-socket` | T1049* | High | Raw/packet socket creation |
+| `self-delete` | T1070.004 | High | Process unlinks its own executable |
+| `namespace-manipulation` | T1611 | High | `setns()` activity |
+| `sensitive-file-access` | T1552 | Medium | Selected sensitive file access |
+| `argv0-filename-mismatch` | T1036.005 | Medium | Executed filename vs `argv[0]` discrepancy |
 
-| Detection                    | ATT&CK Mapping | Severity | Description                                                                          |
-| ---------------------------- | -------------- | -------: | ------------------------------------------------------------------------------------ |
-| `wx-memory-bypass`           | T1055*         | Critical | Observes `mprotect()` requests that include both `PROT_WRITE` and `PROT_EXEC`.       |
-| `cross-process-memory-write` | T1055.009      | Critical | Observes `process_vm_writev()` activity involving another process.                   |
-| `reverse-shell-pattern`      | T1059*         | Critical | Correlates shell/interpreter execution with subsequent outbound TCP activity.        |
-| `ld-preload-injection`       | T1574.006      |     High | Detects processes launched with an `LD_PRELOAD` environment variable.                |
-| `shell-from-webserver`       | T1059.004*     |     High | Correlates shell execution with selected web-server parent processes.                |
-| `unexpected-ptrace`          | T1055*         |     High | Flags selected `ptrace()` activity outside configured debugger/profiler patterns.    |
-| `argv0-filename-mismatch`    | T1036.005*     |   Medium | Looks for discrepancies between the executed binary and the supplied `argv[0]`.      |
-| `sensitive-file-access`      | T1552*         |   Medium | Monitors access to selected sensitive files such as `/etc/passwd` and `/etc/shadow`. |
+* ATT&CK mappings are approximate behavioral mappings, not claims that every event represents the technique.
 
-* **ATT&CK mappings are approximate behavioral mappings, not claims that every event necessarily represents the associated technique.**
-
-### Important detection considerations
-
-These detections are intentionally behavior-based and can generate false positives.
+### Detection context
 
 For example:
 
@@ -258,358 +435,287 @@ For example:
 PROT_WRITE | PROT_EXEC
 ```
 
-is not inherently malicious.
+is security-relevant but not inherently malicious. JIT engines such as V8 can legitimately require executable writable memory.
 
-JIT engines such as V8 may legitimately request executable writable memory during runtime compilation.
+Likewise, `ptrace()`, `process_vm_writev()`, raw sockets, eBPF loading, namespace manipulation, and kernel module loading can have legitimate uses.
 
-Therefore, a production implementation would need additional context such as:
+Production deployments should therefore add context such as:
 
-* Process identity
-* Executable path
-* Parent process
-* Container context
-* Command line
-* Historical behavior
-* Allow-lists
-* File reputation
-* User/session context
-
-The current project intentionally exposes the low-level event rather than attempting to solve every false-positive scenario.
-
----
-
-# Live Evidence & Verification
-
-The project has been tested on a live Ubuntu 22.04 environment.
-
-The following screenshots and recordings show the telemetry pipeline operating from kernel events through the Go agent and into the React dashboard.
-
-## 1. Agent Startup and Kernel Telemetry
-
-![Terminal Logs - Agent Startup and Alerts](docs/assets/Capture-Terminal.PNG)
-
-The agent attaches to the configured tracepoints and kprobe and begins receiving security-relevant events.
-
-![Terminal Logs - Continuous Alerts](docs/assets/Capture3.PNG)
-
-The test environment generated events involving process execution, file access, and other monitored activity.
+- Process identity
+- Executable path
+- Parent process
+- Command line
+- User/session
+- Container identity
+- Historical behavior
+- Allow-lists
+- Host role
+- Deployment-specific policy
 
 ---
 
-## 2. W^X / Memory Protection Detection
+# SOC Dashboard
 
-![Terminal Logs - W^X Alerts](docs/assets/Capture5.PNG)
+The React/TypeScript dashboard lives under `dashboard/` and consumes the Go API rather than communicating directly with eBPF.
 
-The project detected `mprotect()` calls requesting:
+Current presentation includes:
+
+- Security alerts
+- Severity
+- Detection/rule information
+- MITRE ATT&CK metadata
+- Process context
+- Timestamps
+- Network telemetry
+
+![Live Dashboard](docs/assets/live-demo_dashbaord.gif)
+
+![SOC Dashboard](docs/assets/Capture-Web.PNG)
+
+![Critical Alerts](docs/assets/dashboard-critical.png)
+
+The data path is:
 
 ```text
-PROT_WRITE | PROT_EXEC
+Kernel → eBPF → Go Agent → REST API → React Dashboard
 ```
-
-during testing with Node.js/NPM.
-
-This is an important example of why behavioral detections need context.
-
-Node.js uses the V8 JavaScript engine, which relies on JIT compilation and can legitimately require executable memory.
-
-The event therefore demonstrates that the kernel telemetry is working, but it should **not automatically be treated as proof of exploitation**.
-
-In a production detection pipeline, legitimate JIT-heavy applications would typically require additional context or allow-listing.
 
 ---
 
-## 3. JSON Alert API
+# Live Evidence
 
-The Go agent exposes structured security events through:
+The repository contains captured evidence of the telemetry pipeline.
+
+## Agent startup and telemetry
+
+![Agent Startup](docs/assets/Capture-Terminal.PNG)
+
+![Continuous Alerts](docs/assets/Capture3.PNG)
+
+## W^X detection
+
+![W^X Detection](docs/assets/Capture5.PNG)
+
+The test environment observed `mprotect()` requests involving `PROT_WRITE | PROT_EXEC`. Node.js/V8 can legitimately generate this behavior because of JIT compilation, demonstrating why behavioral signals require context.
+
+## Alert API
+
+![JSON Alert API](docs/assets/Capture4.PNG)
+
+The structured alert API is exposed at:
 
 ```text
 /api/alerts
 ```
 
-![JSON API Output](docs/assets/Capture4.PNG)
+## Additional evidence
 
-This creates a simple integration point for a SOC frontend, SIEM, SOAR system, or other security tooling.
+![Web Evidence](docs/assets/live-demo_web.gif)
 
----
-
-## 4. React SOC Dashboard
-
-The dashboard consumes alerts from the Go API and presents them in a real-time security-console format.
-
-![Live Demo - React Dashboard](docs/assets/live-demo_dashbaord.gif)
-
-![React Dashboard - Live Console](docs/assets/Capture-Web.PNG)
-
-The dashboard can filter alerts by severity and display the associated detection and MITRE ATT&CK mapping.
-
-![React Dashboard - Critical Alerts](docs/assets/dashboard-critical.png)
-
----
-
-# Testing Philosophy
-
-The project is designed around a simple pipeline:
-
-```text
-Generate Behavior
-       ↓
-Kernel Event
-       ↓
-eBPF Program
-       ↓
-Ring Buffer
-       ↓
-Go Agent
-       ↓
-Detection / Correlation
-       ↓
-Alert
-       ↓
-SOC Dashboard
-```
-
-This makes it possible to test individual stages independently.
-
-For example, a detection test can verify:
-
-1. A process performs a monitored operation.
-2. The eBPF program observes it.
-3. An event is written to the ring buffer.
-4. The Go agent receives the event.
-5. The detection engine classifies it.
-6. The API exposes the resulting alert.
-7. The dashboard displays it.
-
----
-
-# Limitations & Threat Model
-
-Sentinel-eBPF is **not intended to claim complete malware visibility or kernel-level invulnerability**.
-
-The current implementation has several important limitations.
-
-### Kernel compromise
-
-If an attacker has already compromised the kernel or has sufficiently powerful kernel-level privileges, eBPF-based monitoring cannot be treated as a trusted observation layer.
-
-### Event coverage
-
-The project monitors a selected set of events rather than every possible Linux security-relevant operation.
-
-An attacker may therefore operate through behaviors that are outside the current telemetry coverage.
-
-### False positives
-
-Some monitored behaviors have legitimate uses.
-
-Examples include:
-
-* JIT compilation
-* Debugging
-* Profiling
-* Administrative tools
-* System utilities
-* Security software
-
-Detection rules therefore need environmental tuning.
-
-### Ring-buffer loss
-
-High event rates can create pressure on the ring buffer.
-
-The agent exposes metrics that can be used to identify event loss or processing problems.
-
-For a production deployment, monitoring and alerting on dropped events would be important.
-
-### Kernel compatibility
-
-CO-RE improves portability, but compatibility still depends on kernel capabilities, BTF availability, helper support, and the specific probes used by the project.
-
-The project should therefore be tested against the kernel versions and distributions where it will actually be deployed.
-
----
-
-# Performance & Observability
-
-Performance should be measured rather than assumed.
-
-Sentinel-eBPF exposes telemetry that can be used to evaluate:
-
-* Event processing latency
-* Ring-buffer behavior
-* Event throughput
-* Alert processing
-* Userspace resource consumption
-
-Future benchmarking will focus on measuring the overhead introduced by the monitoring pipeline under different event rates.
-
-Example benchmark format:
-
-```text
-Kernel version:     5.x
-CPU:                ...
-Memory:             ...
-Event rate:         ... events/sec
-Dropped events:     ...
-Agent CPU usage:    ...
-Agent memory:       ...
-Alert latency:      ...
-```
-
-> Performance numbers should be added here only after being measured under a reproducible workload.
-
----
-
-# Deployment
-
-## Prerequisites
-
-Recommended test environment:
-
-* Linux
-* Ubuntu 22.04 LTS
-* Kernel with BTF support
-* Kernel version compatible with the project's eBPF features
-* `clang` / `llvm`
-* `libbpf`
-* Go 1.21+
-* Node.js 18+
-* Appropriate privileges for loading and attaching eBPF programs
-
-Check the running kernel:
-
-```bash
-uname -r
-```
-
-Check for BTF:
-
-```bash
-ls -l /sys/kernel/btf/vmlinux
-```
-
-Depending on the kernel configuration and deployment method, running the agent may require root privileges or appropriate Linux capabilities.
+![Additional Capture](docs/assets/Capture2.PNG)
 
 ---
 
 # Build & Run
 
-## 1. Install dependencies
+## Requirements
+
+- Linux
+- Kernel with BTF support
+- Clang
+- LLVM
+- libbpf
+- libelf
+- bpftool
+- Go 1.22+
+- Node.js/npm for dashboard builds
+- Appropriate privileges/capabilities for eBPF loading
+
+Check the kernel:
+
+```bash
+uname -r
+```
+
+Check BTF:
+
+```bash
+ls -l /sys/kernel/btf/vmlinux
+```
+
+## Ubuntu dependencies
 
 ```bash
 sudo apt update
-
 sudo apt install -y \
-    build-essential \
-    clang \
-    llvm \
-    libbpf-dev \
-    libelf-dev \
-    linux-tools-common \
-    linux-tools-generic \
-    golang-go
+  build-essential \
+  clang \
+  llvm \
+  libbpf-dev \
+  libelf-dev \
+  linux-tools-common \
+  linux-tools-generic
 ```
 
-## 2. Clone the repository
+## Clone
 
 ```bash
 git clone https://github.com/locallhosts/ebpf-edr.git
 cd ebpf-edr
 ```
 
-## 3. Generate kernel type definitions
+## Generate `vmlinux.h`
 
 ```bash
 make vmlinux
 ```
 
-This generates the kernel BTF-derived definitions required by the eBPF build.
+This generates `bpf/vmlinux.h` from:
 
-## 4. Build the agent
+```text
+/sys/kernel/btf/vmlinux
+```
+
+The generated header is target-kernel-specific and should be regenerated when building against a substantially different kernel.
+
+## Build
 
 ```bash
+make bpf
 make agent
 ```
 
-## 5. Start the agent
+Or:
+
+```bash
+make
+```
+
+The resulting agent is:
+
+```text
+bin/edr-agent
+```
+
+## Run
 
 ```bash
 sudo ./bin/edr-agent -addr :9090
 ```
 
----
+Or:
 
-# Dashboard
+```bash
+make run
+```
 
-## Local Development
+## API
+
+| Endpoint | Purpose |
+|---|---|
+| `/healthz` | Health check |
+| `/metrics` | Prometheus metrics |
+| `/api/alerts` | Security alerts |
+| `/api/network` | Bounded network telemetry |
+
+```bash
+curl http://localhost:9090/healthz
+curl http://localhost:9090/api/alerts
+curl http://localhost:9090/api/network
+curl http://localhost:9090/metrics
+```
+
+## Dashboard
+
+```bash
+make dashboard
+```
+
+Or:
 
 ```bash
 cd dashboard
-
 npm install
-
-VITE_AGENT_URL=http://localhost:9090 \
-npm run dev -- --host
+npm run build
 ```
 
-The development server will expose the React dashboard according to the Vite configuration.
+## eBPF verifier validation
+
+```bash
+sudo make test-load
+```
+
+This loads the compiled eBPF object for verifier validation and immediately removes the temporary pinned program.
+
+## Go tests
+
+```bash
+go test ./agent
+```
 
 ---
 
-# Docker Dashboard
+# Continuous Integration
 
-The dashboard can be built as a static frontend:
-
-```bash
-docker build \
-    -f deploy/Dockerfile.dashboard \
-    -t locallhosts/edr-dashboard .
-```
-
-Run it with:
-
-```bash
-docker run \
-    -p 8080:80 \
-    locallhosts/edr-dashboard
-```
-
-The Go agent is intentionally deployed separately because the eBPF programs require access to the host kernel.
-
----
-
-# Systemd Deployment
-
-A systemd service definition is provided under:
+The GitHub Actions workflow is:
 
 ```text
-deploy/edr-agent.service
+.github/workflows/build.yml
 ```
 
-Install it with:
+Current CI flow:
 
-```bash
-sudo cp deploy/edr-agent.service \
-    /etc/systemd/system/edr-agent.service
-
-sudo systemctl daemon-reload
-
-sudo systemctl enable --now edr-agent
+```text
+Checkout
+   ↓
+Go 1.22
+   ↓
+Linux eBPF dependencies
+   ↓
+bpftool discovery
+   ↓
+Runner kernel BTF
+   ↓
+Generate bpf/vmlinux.h
+   ↓
+Compile eBPF
+   ↓
+Build Go agent
+   ↓
+Go tests
 ```
 
-Check the service:
+The workflow handles Ubuntu runner kernel-tool package differences and locates an installed `bpftool` binary instead of assuming a generic package layout.
 
-```bash
-sudo systemctl status edr-agent
-```
+The eBPF build is therefore validated against a real Linux kernel/BTF environment.
 
-View logs:
+---
 
-```bash
-sudo journalctl -u edr-agent -f
-```
+# Security Model & Limitations
 
-Before production use, review the systemd unit and adjust its privileges, paths, capabilities, and filesystem restrictions for the target environment.
+## Kernel trust
+
+A compromised kernel or sufficiently privileged kernel-level attacker can potentially interfere with the observation layer. eBPF telemetry should not be treated as an independent trusted boundary after kernel compromise.
+
+## Coverage
+
+The project monitors selected behaviors, not every Linux operation. Absence of an event does not prove absence of malicious activity.
+
+## False positives
+
+JIT runtimes, debuggers, profilers, network diagnostics, container tooling, security software, and administrators can legitimately perform security-sensitive operations.
+
+## Kernel compatibility
+
+BTF/CO-RE improve portability, but deployment still depends on kernel version, BTF availability, helper support, probe symbols, verifier behavior, and distribution configuration.
+
+## Event pressure
+
+High event rates can pressure the ring buffer and userspace processing path. Production deployments should monitor metrics and account for event loss.
+
+## Network coverage
+
+The generic packet path is IPv4/IPv6 oriented, not full Ethernet/L2 visibility. Payload capture is intentionally outside the current design.
 
 ---
 
@@ -617,38 +723,36 @@ Before production use, review the systemd unit and adjust its privileges, paths,
 
 ```text
 ebpf-edr/
-├── bpf/
-│   ├── vmlinux.h
-│   ├── events.h
-│   └── monitor.bpf.c
-│
+├── .github/workflows/build.yml
 ├── agent/
-│   ├── main.go
-│   ├── loader.go
-│   ├── events.go
-│   ├── detect.go
-│   ├── store.go
-│   ├── metrics.go
 │   ├── api.go
-│   ├── util.go
+│   ├── detect.go
+│   ├── events.go
+│   ├── loader.go
+│   ├── main.go
+│   ├── network.go
 │   └── monitor.bpf.o
-│
+├── bpf/
+│   ├── monitor.bpf.c
+│   └── vmlinux.h
 ├── dashboard/
-│   ├── src/
-│   │   ├── App.tsx
-│   │   ├── useAlerts.ts
-│   │   └── types.ts
-│   └── package.json
-│
-├── deploy/
-│   ├── edr-agent.service
-│   └── Dockerfile.dashboard
-│
-├── docs/
-│   └── assets/
-│
+│   └── src/
+├── docs/assets/
+│   ├── architecture.png
+│   ├── eventabi.png
+│   ├── live-demo.gif
+│   ├── live-demo_dashbaord.gif
+│   ├── live-demo_web.gif
+│   ├── dashboard-critical.png
+│   ├── Capture-Terminal.PNG
+│   ├── Capture-Web.PNG
+│   ├── Capture2.PNG
+│   ├── Capture3.PNG
+│   ├── Capture4.PNG
+│   └── Capture5.PNG
 ├── Makefile
-├── LICENSE
+├── go.mod
+├── go.sum
 └── README.md
 ```
 
@@ -656,37 +760,156 @@ ebpf-edr/
 
 # Roadmap
 
-Potential future improvements include:
+## Telemetry
 
-* [ ] Expand syscall and kernel telemetry coverage
-* [ ] Add additional process ancestry correlations
-* [ ] Add configurable allow-lists
-* [ ] Improve JIT/W^X contextual detection
-* [ ] Add container-aware detection
-* [ ] Add automated integration tests
-* [x] Add GitHub Actions CI
-* [ ] Add reproducible performance benchmarks
-* [ ] Add event-loss stress testing
-* [x] IPv4/IPv6 TCP telemetry
-* [x] IPv4/IPv6 UDP telemetry
-* [x] Protocol-aware socket telemetry
-* [x] Bounded `/api/network` network telemetry API
-* [ ] Add configurable detection policies
-* [ ] Improve alert deduplication
-* [ ] Add richer SIEM/SOAR integration
+- [x] Process execution
+- [x] Sensitive file access
+- [x] `ptrace()`
+- [x] `mprotect()`
+- [x] Cross-process memory
+- [x] Kernel module telemetry
+- [x] eBPF load telemetry
+- [x] `memfd_create()`
+- [x] Namespace manipulation
+- [x] Process self-deletion
+- [x] IPv4 TCP
+- [x] IPv6 TCP
+- [x] IPv4 UDP
+- [x] IPv6 UDP
+- [x] TCP accept/listen
+- [x] Socket creation
+- [x] Generic IPv4 packet telemetry
+- [x] Generic IPv6 packet telemetry
+- [ ] Expanded Layer-2/XDP telemetry
+- [ ] IPv6 extension-header traversal
+
+## Detection Engineering
+
+- [x] Kernel-side behavioral signals
+- [x] Stateful process correlations
+- [x] Reverse-shell indicators
+- [x] Bind-shell indicators
+- [x] W^X detection
+- [x] Process-injection indicators
+- [x] Fileless-execution indicators
+- [x] Persistence indicators
+- [x] Raw/packet-socket indicators
+- [x] Namespace manipulation indicators
+- [ ] Configurable detection policies
+- [ ] Environment-specific allow-lists
+- [ ] Network event deduplication
+- [ ] Expanded ATT&CK coverage
+
+## Operations
+
+- [x] Go agent
+- [x] REST API
+- [x] Prometheus metrics
+- [x] Network telemetry API
+- [x] Health endpoint
+- [x] React/TypeScript dashboard
+- [x] GitHub Actions CI
+- [ ] Reproducible performance benchmarks
+- [ ] Event-loss stress testing
+- [ ] Container-aware telemetry
+- [ ] SIEM/SOAR integrations
 
 ---
 
-# Security Considerations
+# Development Workflow
 
-Sentinel-eBPF loads programs into the Linux kernel through the eBPF subsystem.
+```text
+Modify eBPF program
+        ↓
+Generate/update kernel types
+        ↓
+Compile eBPF object
+        ↓
+Run verifier validation
+        ↓
+Build Go agent
+        ↓
+Run tests
+        ↓
+Generate controlled behavior
+        ↓
+Inspect telemetry
+        ↓
+Validate detection
+        ↓
+Validate API
+        ↓
+Validate dashboard
+        ↓
+Document limitations
+```
 
-Only deploy the project on systems where the source code, compiled artifacts, and deployment configuration have been reviewed and trusted.
+The project treats **implementation, verification, detection validation, and documentation as separate engineering concerns**.
 
-The project should be treated as security-sensitive software and tested in an isolated environment before deployment on production systems.
+---
+
+# Project Status
+
+The active branch is:
+
+```text
+master
+```
+
+Current implementation includes:
+
+- Kernel-level eBPF instrumentation
+- Required/optional probe loading
+- BTF-derived kernel types
+- BPF ring-buffer event transport
+- Structured event ABI
+- Go userspace decoding
+- Stateful behavioral correlation
+- Security alert generation
+- IPv4/IPv6 network telemetry
+- Generic IP packet metadata
+- Socket telemetry
+- Bounded network event storage
+- REST APIs
+- Prometheus metrics
+- React/TypeScript dashboard
+- Automated Linux CI
+
+This repository is maintained as a **security engineering and research project**. Production deployment should include additional hardening, compatibility testing, policy configuration, observability, and independent validation.
+
+---
+
+# Engineering Lessons
+
+### Kernel/userspace ABI design
+
+The event structure is a contract between C/eBPF and Go. Field-layout changes require coordinated updates.
+
+### Verifier-aware programming
+
+eBPF memory access, pointer arithmetic, parsing, loops, and data reads must remain bounded and verifier-safe.
+
+### Kernel compatibility
+
+Compilation does not guarantee deployment compatibility. BTF, CO-RE, kernel symbols, helpers, probe availability, and verifier behavior all matter.
+
+### Detection versus observation
+
+Collecting an event and interpreting it are separate problems. Sentinel-eBPF intentionally keeps those layers distinct.
+
+### Network telemetry design
+
+Socket-level telemetry provides process context while generic packet hooks broaden protocol visibility. Combining both increases coverage but introduces possible duplicates and kernel-version dependencies.
 
 ---
 
 # License
 
-MIT License. See [`LICENSE`](LICENSE) for details.
+MIT License. See [LICENSE](LICENSE).
+
+## Author
+
+**locallhosts**  
+Security Engineering · Linux Security · eBPF · Detection Engineering · Security Automation
+
+[GitHub](https://github.com/locallhosts)
