@@ -37,10 +37,11 @@ type Detector struct {
     procs map[uint32]processState
     ttl   time.Duration
     onAlert func(Alert)
+    config Config
 }
 
-func NewDetector(onAlert func(Alert)) *Detector {
-    d := &Detector{procs: make(map[uint32]processState), ttl: 30 * time.Second, onAlert: onAlert}
+func NewDetector(onAlert func(Alert), config Config) *Detector {
+    d := &Detector{procs: make(map[uint32]processState), ttl: 30 * time.Second, onAlert: onAlert, config: config}
     go d.reaper()
     return d
 }
@@ -69,6 +70,9 @@ var sensitivePaths = []string{
 }
 
 func (d *Detector) Handle(ev Event) {
+    if d.config.AllowedComms[ev.Comm] || (ev.Filename != "" && d.config.AllowedExecutables[ev.Filename]) {
+        return
+    }
     switch ev.Type {
     case EvtExec:
         d.handleExec(ev)
@@ -229,6 +233,12 @@ func (d *Detector) handleKernelSecurityEvent(ev Event) {
 }
 
 func (d *Detector) emit(a Alert) {
+    if d.config.DisabledRules[a.Rule] {
+        return
+    }
+    if d.config.AllowedComms[a.Comm] {
+        return
+    }
     if d.onAlert != nil { d.onAlert(a) }
 }
 
