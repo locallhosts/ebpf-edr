@@ -29,6 +29,7 @@ type LoadedProbes struct {
     events     chan Event
     done       chan struct{}
     dropMap    *ebpf.Map
+    lastDrops  uint64
 }
 
 func loadCollection(object []byte) (*ebpf.Collection, error) {
@@ -171,12 +172,15 @@ func (lp *LoadedProbes) Read() (Event, error) {
     return ev, nil
 }
 
-func (lp *LoadedProbes) RingbufDrops() uint64 {
-    if lp.dropMap == nil { return 0 }
+func (lp *LoadedProbes) ObserveRingbufDrops() {
+    if lp.dropMap == nil { return }
     var key uint32
     var drops uint64
-    if err := lp.dropMap.Lookup(&key, &drops); err != nil { return 0 }
-    return drops
+    if err := lp.dropMap.Lookup(&key, &drops); err != nil { return }
+    if drops > lp.lastDrops {
+        ringbufLoss.Add(float64(drops - lp.lastDrops))
+        lp.lastDrops = drops
+    }
 }
 
 func (lp *LoadedProbes) Close() {
