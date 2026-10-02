@@ -52,9 +52,14 @@ char LICENSE[] SEC("license") = "GPL";
 #define FAM_INET       2   // AF_INET
 #define FAM_INET6      10  // AF_INET6
 #define FAM_PACKET     17  // AF_PACKET - raw sockets live here
+#define PROTO_ICMP     1   // IPPROTO_ICMP
 #define PROTO_TCP      6   // IPPROTO_TCP
 #define PROTO_UDP      17  // IPPROTO_UDP
-#define SOCK_RAW_TYPE  3   // SOCK_RAW
+#define PROTO_ICMPV6   58  // IPPROTO_ICMPV6
+#define PROTO_SCTP     132 // IPPROTO_SCTP
+#define SOCK_STREAM_TYPE 1
+#define SOCK_DGRAM_TYPE  2
+#define SOCK_RAW_TYPE    3
 
 /* ---- Direction ---- */
 #define DIR_OUTBOUND   0
@@ -490,6 +495,12 @@ int trace_socket(struct trace_event_raw_sys_enter_socket *ctx) {
     fill_common(ev, EVT_SOCKET_CREATE);
     ev->sock_family = (__u32)ctx->family;
     ev->sock_type = (__u32)(ctx->type & 0xFF); // low byte, mask off SOCK_NONBLOCK/SOCK_CLOEXEC
+    ev->protocol = (__u8)ctx->protocol;
+    if (ev->protocol == 0) {
+        if (ev->sock_type == SOCK_STREAM_TYPE) ev->protocol = PROTO_TCP;
+        else if (ev->sock_type == SOCK_DGRAM_TYPE) ev->protocol = PROTO_UDP;
+    }
+    ev->family = (__u8)ctx->family;
 
     if (ctx->family == FAM_PACKET || ev->sock_type == SOCK_RAW_TYPE) {
         ev->alert_flags |= ALERT_RAW_SOCKET;
@@ -576,6 +587,8 @@ int BPF_KPROBE(trace_connect_v4, struct sock *sk) {
     BPF_CORE_READ_INTO(&dst_port, sk, __sk_common.skc_dport);
     ev->dst_addr = dst_addr;
     ev->dst_port = bpf_ntohs(dst_port);
+    BPF_CORE_READ_INTO(&ev->src_addr, sk, __sk_common.skc_rcv_saddr);
+    BPF_CORE_READ_INTO(&ev->src_port, sk, __sk_common.skc_num);
 
     __u32 tgid = ev->tgid;
     char *saved_comm = bpf_map_lookup_elem(&exec_history, &tgid);
@@ -599,6 +612,8 @@ int BPF_KPROBE(trace_connect_v6, struct sock *sk) {
     BPF_CORE_READ_INTO(&dst_port, sk, __sk_common.skc_dport);
     ev->dst_port = bpf_ntohs(dst_port);
     BPF_CORE_READ_INTO(&ev->dst_addr6, sk, __sk_common.skc_v6_daddr.in6_u.u6_addr8);
+    BPF_CORE_READ_INTO(&ev->src_addr6, sk, __sk_common.skc_v6_rcv_saddr.in6_u.u6_addr8);
+    BPF_CORE_READ_INTO(&ev->src_port, sk, __sk_common.skc_num);
 
     __u32 tgid = ev->tgid;
     char *saved_comm = bpf_map_lookup_elem(&exec_history, &tgid);
@@ -637,6 +652,8 @@ int BPF_KPROBE(trace_udp_sendmsg, struct sock *sk, struct msghdr *msg) {
     }
     ev->dst_addr = dst_addr;
     ev->dst_port = dst_port;
+    BPF_CORE_READ_INTO(&ev->src_addr, sk, __sk_common.skc_rcv_saddr);
+    BPF_CORE_READ_INTO(&ev->src_port, sk, __sk_common.skc_num);
 
     __u32 tgid = ev->tgid;
     char *saved_comm = bpf_map_lookup_elem(&exec_history, &tgid);
@@ -708,6 +725,11 @@ int BPF_KRETPROBE(trace_inet_csk_accept, struct sock *sk) {
     __u16 src_port = 0;
     BPF_CORE_READ_INTO(&src_port, sk, __sk_common.skc_num);
     ev->src_port = src_port;
+    if (family == FAM_INET6) {
+        BPF_CORE_READ_INTO(&ev->src_addr6, sk, __sk_common.skc_v6_rcv_saddr.in6_u.u6_addr8);
+    } else {
+        BPF_CORE_READ_INTO(&ev->src_addr, sk, __sk_common.skc_rcv_saddr);
+    }
 
     if (comm_is_shell(ev)) {
         ev->alert_flags |= ALERT_BIND_SHELL_LIKELY;
