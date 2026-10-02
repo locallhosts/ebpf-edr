@@ -3,6 +3,10 @@ name: eBPF EDR Build
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -15,6 +19,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.22"
+          cache: true
 
       - name: Install eBPF build dependencies
         run: |
@@ -53,6 +58,14 @@ jobs:
           test -s bpf/vmlinux.h
           wc -l bpf/vmlinux.h
 
+      - name: Verify Go module path
+        run: |
+          test "$(go list -m)" = "github.com/locallhosts/ebpf-edr"
+          if grep -R --exclude-dir=.git -n "github.com/portfolio/ebpf-edr" .; then
+            echo "Found stale module references"
+            exit 1
+          fi
+
       - name: Build eBPF and XDP objects
         run: make bpf xdp
 
@@ -64,3 +77,17 @@ jobs:
 
       - name: Security validation and benchmarks
         run: bash tests/security_validation.sh
+
+      - name: Package Linux agent
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp /tmp/edr-agent dist/edr-agent-linux-amd64
+          tar -C dist -czf dist/ebpf-edr-linux-amd64.tar.gz edr-agent-linux-amd64
+          sha256sum dist/* > dist/SHA256SUMS
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ebpf-edr-linux-amd64
+          path: dist/
