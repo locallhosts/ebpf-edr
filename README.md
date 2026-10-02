@@ -26,24 +26,7 @@ The system is designed to demonstrate how security telemetry can be collected cl
   <img src="docs/assets/live-demo_web.gif" alt="Live Web Dashboard" width="48%">
 </p>
 
-<p align="center">
-  <img src="docs/assets/Capture-Web.PNG" alt="SOC Web Dashboard" width="48%">
-  <img src="docs/assets/dashboard-critical.png" alt="Critical Security Alerts" width="48%">
-</p>
 
-<p align="center">
-  <img src="docs/assets/Capture-Terminal.PNG" alt="Agent Terminal Telemetry" width="48%">
-  <img src="docs/assets/Capture3.PNG" alt="Continuous Security Alerts" width="48%">
-</p>
-
-<p align="center">
-  <img src="docs/assets/Capture4.PNG" alt="Alert API Output" width="48%">
-  <img src="docs/assets/Capture5.PNG" alt="W-X Memory Detection" width="48%">
-</p>
-
-<p align="center">
-  <img src="docs/assets/Capture2.PNG" alt="Additional Telemetry Evidence" width="48%">
-</p>
 
 > **Visual evidence:** The screenshots and GIFs above are captured from the project's kernel telemetry, detection, API, and dashboard workflows.
 
@@ -382,27 +365,7 @@ CROSS_PROCESS_INJECT
 ---
 
 # Detection Coverage
-
-| Rule | ATT&CK | Severity | Signal |
-|---|---|---:|---|
-| `wx-memory-bypass` | T1055* | Critical | Writable + executable memory via `mprotect()` |
-| `cross-process-memory-write` | T1055.009 | Critical | Cross-process `process_vm_writev()` |
-| `reverse-shell-pattern` | T1059 | Critical | Shell/interpreter + outbound network correlation |
-| `bind-shell-pattern` | T1059 | Critical | Shell process accepting inbound connection |
-| `ld-preload-injection` | T1574.006 | High | `LD_PRELOAD` execution indicator |
-| `shell-from-webserver` | T1059.004 | High | Shell execution associated with selected web servers |
-| `unexpected-ptrace` | T1055 | High | `ptrace()` outside known debugger process names |
-| `unexpected-listener` | T1571 | High | Selected shell/interpreter listener behavior |
-| `kernel-module-load` | T1014* | Critical | Kernel module load signal |
-| `bpf-program-load` | T1547* | High | eBPF program load signal |
-| `privilege-escalation-to-root` | T1548 | Critical | Credential transition to root |
-| `persistence-write` | T1053/T1547* | High | Persistence-sensitive write |
-| `fileless-execution` | T1620 | Critical | Fileless execution correlation |
-| `raw-or-packet-socket` | T1049* | High | Raw/packet socket creation |
-| `self-delete` | T1070.004 | High | Process unlinks its own executable |
-| `namespace-manipulation` | T1611 | High | `setns()` activity |
-| `sensitive-file-access` | T1552 | Medium | Selected sensitive file access |
-| `argv0-filename-mismatch` | T1036.005 | Medium | Executed filename vs `argv[0]` discrepancy |
+![Sentinel-eBPF Detection](docs/assets/detection_coverage.png)
 
 * ATT&CK mappings are approximate behavioral mappings, not claims that every event represents the technique.
 
@@ -696,44 +659,6 @@ High event rates can pressure the ring buffer and userspace processing path. Pro
 
 The generic packet path is IPv4/IPv6 oriented, not full Ethernet/L2 visibility. Payload capture is intentionally outside the current design.
 
----
-
-# Repository Structure
-
-```text
-ebpf-edr/
-├── .github/workflows/build.yml
-├── agent/
-│   ├── api.go
-│   ├── detect.go
-│   ├── events.go
-│   ├── loader.go
-│   ├── main.go
-│   ├── network.go
-│   └── monitor.bpf.o
-├── bpf/
-│   ├── monitor.bpf.c
-│   └── vmlinux.h
-├── dashboard/
-│   └── src/
-├── docs/assets/
-│   ├── architecture.png
-│   ├── eventabi.png
-│   ├── live-demo.gif
-│   ├── live-demo_dashbaord.gif
-│   ├── live-demo_web.gif
-│   ├── dashboard-critical.png
-│   ├── Capture-Terminal.PNG
-│   ├── Capture-Web.PNG
-│   ├── Capture2.PNG
-│   ├── Capture3.PNG
-│   ├── Capture4.PNG
-│   └── Capture5.PNG
-├── Makefile
-├── go.mod
-├── go.sum
-└── README.md
-```
 
 ---
 
@@ -759,8 +684,8 @@ ebpf-edr/
 - [x] Socket creation
 - [x] Generic IPv4 packet telemetry
 - [x] Generic IPv6 packet telemetry
-- [ ] Expanded Layer-2/XDP telemetry
-- [ ] IPv6 extension-header traversal
+- [x] Expanded Layer-2/XDP telemetry
+- [x] IPv6 extension-header traversal
 
 ## Detection Engineering
 
@@ -775,9 +700,9 @@ ebpf-edr/
 - [x] Raw/packet-socket indicators
 - [x] Namespace manipulation indicators
 - [ ] Configurable detection policies
-- [ ] Environment-specific allow-lists
-- [ ] Network event deduplication
-- [ ] Expanded ATT&CK coverage
+- [x] Environment-specific allow-lists
+- [x] Network event deduplication
+- [x] Expanded ATT&CK coverage
 
 ## Operations
 
@@ -788,10 +713,10 @@ ebpf-edr/
 - [x] Health endpoint
 - [x] React/TypeScript dashboard
 - [x] GitHub Actions CI
-- [ ] Reproducible performance benchmarks
-- [ ] Event-loss stress testing
-- [ ] Container-aware telemetry
-- [ ] SIEM/SOAR integrations
+- [x] Reproducible performance benchmarks
+- [x] Event-loss stress testing
+- [x] Container-aware telemetry
+- [x] SIEM/SOAR integrations
 
 ---
 
