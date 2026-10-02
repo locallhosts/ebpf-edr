@@ -75,3 +75,30 @@ func TestContainerIDExtraction(t *testing.T) {
 		t.Fatalf("unexpected container id from %q", got)
 	}
 }
+
+
+func TestNetworkStoreConcurrentStress(t *testing.T) {
+	s := NewNetworkStore(128, time.Millisecond)
+	ev := Event{
+		Pid: 7, Ppid: 1, Tgid: 7, Comm: "stress",
+		Type: EvtPacket, Family: FamilyIPv4, Protocol: ProtocolUDP,
+		Direction: DirectionOutbound, PacketLen: 64,
+	}
+	done := make(chan struct{})
+	for i := 0; i < 16; i++ {
+		go func(seed uint16) {
+			for j := 0; j < 5000; j++ {
+				ev.SrcPort = seed + uint16(j%100)
+				s.Add(ev, "")
+				_ = s.Snapshot()
+			}
+			done <- struct{}{}
+		}(uint16(i * 1000))
+	}
+	for i := 0; i < 16; i++ {
+		<-done
+	}
+	if got := len(s.Snapshot()); got > 128 {
+		t.Fatalf("store exceeded configured capacity: %d", got)
+	}
+}
