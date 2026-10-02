@@ -10,7 +10,7 @@ import (
 type Alert struct {
     Time        time.Time `json:"time"`
     Severity    string `json:"severity"`
-    Technique   string `json:"mitre_technique"`
+    Technique   string `json:"mitre_technique,omitempty"`
     Rule        string `json:"rule"`
     Pid         uint32 `json:"pid"`
     Ppid        uint32 `json:"ppid"`
