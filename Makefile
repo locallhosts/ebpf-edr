@@ -32,7 +32,7 @@ test-load: bpf xdp
 	rm -f /sys/fs/bpf/edr_xdp_test_load
 
 test-validation:
-	./tests/security_validation.sh
+	bash tests/security_validation.sh
 
 test-perf:
 	go test -bench=. -benchmem ./agent
