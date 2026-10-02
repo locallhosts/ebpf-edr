@@ -21,6 +21,26 @@ var (
         Help: "Events dropped because userspace couldn't keep up with the ring buffer.",
     })
 
+    webhookDelivered = promauto.NewCounter(prometheus.CounterOpts{
+        Name: "edr_webhook_delivered_total",
+        Help: "Alerts successfully delivered to the configured webhook.",
+    })
+
+    webhookFailures = promauto.NewCounter(prometheus.CounterOpts{
+        Name: "edr_webhook_failures_total",
+        Help: "Webhook delivery attempts that failed.",
+    })
+
+    webhookDropped = promauto.NewCounter(prometheus.CounterOpts{
+        Name: "edr_webhook_dropped_total",
+        Help: "Alerts dropped because the webhook queue was full.",
+    })
+
+    networkDeduped = promauto.NewCounter(prometheus.CounterOpts{
+        Name: "edr_network_events_deduped_total",
+        Help: "Network telemetry records suppressed by the userspace deduplicator.",
+    })
+
     eventProcessLatency = promauto.NewHistogram(prometheus.HistogramOpts{
         Name:    "edr_event_process_seconds",
         Help:    "Time from kernel timestamp to userspace processing completion.",
