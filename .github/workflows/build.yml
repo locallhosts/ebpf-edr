@@ -60,17 +60,29 @@ jobs:
 
       - name: Verify Go module path
         run: |
+          set -euo pipefail
           test "$(go list -m)" = "github.com/locallhosts/ebpf-edr"
-          if grep -R --exclude-dir=.git -n "github.com/portfolio/ebpf-edr" .; then
-            echo "Found stale module references"
+          if git grep -n "github.com/portfolio/ebpf-edr" -- . ':!go.sum'; then
+            echo "Found stale tracked module references"
             exit 1
           fi
 
       - name: Build eBPF and XDP objects
         run: make bpf xdp
 
-      - name: Build agent
-        run: go build -o /tmp/edr-agent ./agent
+      - name: Build agent for Linux amd64
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: go build -o /tmp/edr-agent-linux-amd64 ./agent
+
+      - name: Build agent for Linux arm64
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: 0
+        run: go build -o /tmp/edr-agent-linux-arm64 ./agent
 
       - name: Compile agent tests
         run: go test ./agent
@@ -78,16 +90,28 @@ jobs:
       - name: Security validation and benchmarks
         run: bash tests/security_validation.sh
 
-      - name: Package Linux agent
+      - name: Package Linux release archives
         run: |
           set -euo pipefail
-          mkdir -p dist
-          cp /tmp/edr-agent dist/edr-agent-linux-amd64
-          tar -C dist -czf dist/ebpf-edr-linux-amd64.tar.gz edr-agent-linux-amd64
-          sha256sum dist/* > dist/SHA256SUMS
+          VERSION="v1.0.0"
+          mkdir -p dist/amd64 dist/arm64
 
-      - name: Upload build artifacts
+          cp /tmp/edr-agent-linux-amd64 dist/amd64/edr-agent
+          cp /tmp/edr-agent-linux-arm64 dist/arm64/edr-agent
+
+          tar -C dist/amd64 -czf "dist/ebpf-edr-${VERSION}-linux-amd64.tar.gz" edr-agent
+          tar -C dist/arm64 -czf "dist/ebpf-edr-${VERSION}-linux-arm64.tar.gz" edr-agent
+
+          cd dist
+          sha256sum "ebpf-edr-${VERSION}-linux-amd64.tar.gz"                     "ebpf-edr-${VERSION}-linux-arm64.tar.gz" > SHA256SUMS
+
+          ls -lh .
+
+      - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ebpf-edr-linux-amd64
-          path: dist/
+          name: ebpf-edr-v1.0.0-linux
+          path: |
+            dist/ebpf-edr-v1.0.0-linux-amd64.tar.gz
+            dist/ebpf-edr-v1.0.0-linux-arm64.tar.gz
+            dist/SHA256SUMS
