@@ -54,9 +54,14 @@ func main() {
     log.Println("Sentinel-eBPF Agent is running. Monitoring live syscalls...")
     fmt.Println("------------------------------------------------------------------")
 
+    config := LoadConfig()
     store := NewAlertStore(500)
-    networkStore := NewNetworkStore(1000)
-    
+    networkStore := NewNetworkStore(1000, config.NetworkDedupWindow)
+    webhook := NewWebhookSink(config.WebhookURL, config.WebhookToken)
+
+    log.Printf("policy: disabled_rules=%d allow_comms=%d allow_executables=%d network_dedup=%s container_context=%t",
+        len(config.DisabledRules), len(config.AllowedComms), len(config.AllowedExecutables), config.NetworkDedupWindow, config.ContainerContext)
+
     // Initialize the detection engine with a callback that handles triggered alerts
     detector := NewDetector(func(a Alert) {
         store.Add(a)
@@ -74,7 +79,8 @@ func main() {
 
         log.Printf("%s[ALERT][%s] %s (rule=%s technique=%s pid=%d comm=%s)%s",
             color, a.Severity, a.Description, a.Rule, a.Technique, a.Pid, a.Comm, colorReset)
-    })
+        webhook.Publish(a)
+    }, config)
 
     // Start the HTTP server in a background goroutine for the React dashboard & Prometheus
     go ServeHTTP(*addr, store, networkStore)
@@ -103,7 +109,11 @@ func main() {
         }
 
         // Keep bounded network metadata for /api/network.
-        networkStore.Add(ev)
+        containerID := ""
+        if config.ContainerContext {
+            containerID = containerContext(ev.Tgid)
+        }
+        networkStore.Add(ev, containerID)
 
         // Update Prometheus metrics
         eventsTotal.WithLabelValues(ev.TypeName()).Inc()
