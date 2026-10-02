@@ -589,11 +589,14 @@ sudo make test-load
 
 This loads the compiled eBPF object for verifier validation and immediately removes the temporary pinned program.
 
-## Go tests
+## Validation & performance
 
 ```bash
-go test ./agent
+sudo make test-validation
+make test-perf
 ```
+
+The validation suite runs Go tests, race/stress coverage, static analysis, userspace benchmarks, eBPF/XDP compilation, source-level coverage assertions, and — when executed as root with `bpftool` — kernel verifier/load validation. Ring-buffer loss is counted in the kernel when reservation fails and exposed through `edr_ringbuf_lost_total`.
 
 ---
 
@@ -657,7 +660,7 @@ High event rates can pressure the ring buffer and userspace processing path. Pro
 
 ## Network coverage
 
-The generic packet path is IPv4/IPv6 oriented, not full Ethernet/L2 visibility. Payload capture is intentionally outside the current design.
+The generic kprobe packet path is IPv4/IPv6 oriented. An optional generic-mode XDP sensor now adds Ethernet/L2 ingress visibility, including one VLAN tag. Payload capture is intentionally outside the current design.
 
 
 ---
@@ -684,8 +687,8 @@ The generic packet path is IPv4/IPv6 oriented, not full Ethernet/L2 visibility. 
 - [x] Socket creation
 - [x] Generic IPv4 packet telemetry
 - [x] Generic IPv6 packet telemetry
-- [ ] Expanded Layer-2/XDP telemetry
-- [ ] IPv6 extension-header traversal
+- [x] Expanded Layer-2/XDP telemetry
+- [x] IPv6 extension-header traversal
 
 ## Detection Engineering
 
@@ -702,7 +705,7 @@ The generic packet path is IPv4/IPv6 oriented, not full Ethernet/L2 visibility. 
 - [x] Configurable detection policies
 - [x] Environment-specific allow-lists
 - [x] Network event deduplication
-- [ ] Expanded ATT&CK coverage
+- [x] Expanded ATT&CK coverage
 
 ## Operations
 
@@ -714,7 +717,7 @@ The generic packet path is IPv4/IPv6 oriented, not full Ethernet/L2 visibility. 
 - [x] React/TypeScript dashboard
 - [x] GitHub Actions CI
 - [x] Reproducible performance benchmarks
-- [ ] Event-loss stress testing
+- [x] Event-loss stress testing
 - [x] Container-aware telemetry
 - [x] SIEM/SOAR integrations
 
@@ -772,7 +775,10 @@ Current implementation includes:
 - Security alert generation
 - IPv4/IPv6 network telemetry
 - Generic IP packet metadata
+- Optional XDP Ethernet/L2 ingress telemetry
+- Bounded IPv6 extension-header parsing
 - Socket telemetry
+- Expanded ATT&CK-aligned detection mappings
 - Bounded network event storage
 - Configurable detection policy and allow-lists
 - Network metadata deduplication
