@@ -55,6 +55,7 @@ func main() {
     fmt.Println("------------------------------------------------------------------")
 
     store := NewAlertStore(500)
+    networkStore := NewNetworkStore(1000)
     
     // Initialize the detection engine with a callback that handles triggered alerts
     detector := NewDetector(func(a Alert) {
@@ -76,7 +77,7 @@ func main() {
     })
 
     // Start the HTTP server in a background goroutine for the React dashboard & Prometheus
-    go ServeHTTP(*addr, store)
+    go ServeHTTP(*addr, store, networkStore)
 
     // Graceful shutdown on SIGINT/SIGTERM: detach probes cleanly rather
     // than leaving orphaned BPF links pinned in the kernel.
@@ -100,6 +101,9 @@ func main() {
             log.Printf("ring buffer read error: %v", err)
             continue
         }
+
+        // Keep bounded network metadata for /api/network.
+        networkStore.Add(ev)
 
         // Update Prometheus metrics
         eventsTotal.WithLabelValues(ev.TypeName()).Inc()
