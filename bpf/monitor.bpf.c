@@ -49,7 +49,7 @@ char LICENSE[] SEC("license") = "GPL";
 #define EVT_SETNS         15 // NEW: setns()
 #define EVT_PACKET        16 // Generic IPv4/IPv6 packet telemetry
 
-/* ---- Address family / protocol tags (mirrors Linux AF_*/IPPROTO_*) ---- */
+/* ---- Address family / protocol tags (mirrors Linux AF_* and IPPROTO_* values) ---- */
 #define FAM_INET       2   // AF_INET
 #define FAM_INET6      10  // AF_INET6
 #define FAM_PACKET     17  // AF_PACKET - raw sockets live here
@@ -230,8 +230,8 @@ static __always_inline int is_persistence_path(const char *path) {
     return 0;
 }
 
-/* fileless-exec indicator - execve target living under /proc/*/fd/ or
- * /dev/fd/ or /memfd: means the code being run has no path on disk. */
+/* fileless-exec indicator - execve target living under /proc/<pid>/fd/,
+ * /dev/fd/, or /memfd: means the code being run has no path on disk. */
 static __always_inline int is_fileless_exec_target(const char *path) {
     if (path_startswith(path, "/proc/self/fd/", 14)) return 1;
     if (path_startswith(path, "/dev/fd/", 8)) return 1;
