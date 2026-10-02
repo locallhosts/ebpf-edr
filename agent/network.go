@@ -1,11 +1,14 @@
 package main
 
-import "sync"
+import (
+    "sync"
+    "time"
+)
 
 // NetworkFlow is the normalized network telemetry exposed to the dashboard/API.
 // It intentionally contains metadata only; packet payloads are never captured.
 type NetworkFlow struct {
-    Time      int64  `json:"time_unix_ns"`
+    Time      time.Time `json:"time"`
     Pid       uint32 `json:"pid"`
     Ppid      uint32 `json:"ppid"`
     Comm      string `json:"comm"`
@@ -35,7 +38,7 @@ func (s *NetworkStore) Add(ev Event) {
     }
 
     flow := NetworkFlow{
-        Time: ev.TimestampNs, Pid: ev.Pid, Ppid: ev.Ppid, Comm: ev.Comm,
+        Time: time.Unix(0, int64(ev.TimestampNs)), Pid: ev.Pid, Ppid: ev.Ppid, Comm: ev.Comm,
         EventType: ev.TypeName(), Family: ev.FamilyName(),
         Protocol: ev.ProtocolName(), Direction: ev.DirectionName(),
         SrcAddr: ipString(ev.SrcAddr, ev.SrcAddr6), SrcPort: ev.SrcPort,
