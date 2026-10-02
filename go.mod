@@ -1,4 +1,4 @@
-module github.com/portfolio/ebpf-edr
+module github.com/locallhosts/ebpf-edr
 
 go 1.22.2
 
