@@ -18,6 +18,7 @@ jobs:
 
       - name: Install eBPF build dependencies
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y clang llvm libbpf-dev libelf-dev linux-tools-common
           case "$(uname -r)" in
@@ -25,16 +26,28 @@ jobs:
             *lowlatency*) sudo apt-get install -y linux-lowlatency-tools-common || true ;;
             *) sudo apt-get install -y linux-tools-generic ;;
           esac
-          if ! command -v bpftool >/dev/null 2>&1; then
-            for p in /usr/lib/linux-tools/*/bpftool /usr/lib/linux-tools-*/bpftool; do
-              if [ -x "$p" ]; then
-                sudo ln -sf "$p" /usr/local/bin/bpftool
-                break
-              fi
-            done
+
+          # Ubuntu's /usr/sbin/bpftool can be a kernel-version wrapper. The
+          # hosted runner may be running a kernel whose exact tools package is
+          # unavailable, while a compatible bpftool binary is already installed
+          # under /usr/lib/linux-tools/<version>. Prefer that real binary.
+          BPFTOOL_BIN=""
+          for p in /usr/lib/linux-tools/*/bpftool /usr/lib/linux-tools-*/bpftool; do
+            if [ -x "$p" ] && [ ! -L "$p" ]; then
+              BPFTOOL_BIN="$p"
+              break
+            fi
+          done
+
+          if [ -z "$BPFTOOL_BIN" ]; then
+            echo "No standalone bpftool binary was installed"
+            find /usr/lib/linux-tools -maxdepth 2 -type f -name bpftool -print || true
+            exit 1
           fi
-          command -v bpftool
-          bpftool version
+
+          echo "Using bpftool: $BPFTOOL_BIN"
+          "$BPFTOOL_BIN" version
+          sudo ln -sf "$BPFTOOL_BIN" /usr/local/bin/bpftool
 
       - name: Build eBPF object
         run: make bpf
