@@ -19,7 +19,12 @@ jobs:
       - name: Install eBPF build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm libbpf-dev libelf-dev bpftool
+          sudo apt-get install -y clang llvm libbpf-dev libelf-dev linux-tools-common linux-tools-generic
+          sudo apt-get install -y "linux-tools-$(uname -r)" || true
+          if ! command -v bpftool >/dev/null 2>&1; then
+            sudo ln -sf /usr/lib/linux-tools/*/bpftool /usr/local/bin/bpftool 2>/dev/null || true
+          fi
+          command -v bpftool || { echo "bpftool installation failed"; apt-cache policy linux-tools-common linux-tools-generic; exit 1; }
 
       - name: Build eBPF object
         run: make bpf
