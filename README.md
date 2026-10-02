@@ -1,4 +1,18 @@
-# Sentinel-eBPF — Linux Kernel Threat Detection & Network Telemetry
+# eBPF EDR — Linux Kernel Security Telemetry & Detection
+
+
+[![eBPF EDR Build](https://github.com/locallhosts/ebpf-edr/actions/workflows/build.yml/badge.svg)](https://github.com/locallhosts/ebpf-edr/actions/workflows/build.yml)
+[![Language](https://img.shields.io/badge/eBPF-C-blue)](https://ebpf.io/)
+[![Userspace](https://img.shields.io/badge/userspace-Go-00ADD8)](https://go.dev/)
+[![Dashboard](https://img.shields.io/badge/dashboard-React%20%2F%20TypeScript-61DAFB)](https://react.dev/)
+[![Platform](https://img.shields.io/badge/platform-Linux-FCC624)](https://www.linux.org/)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+eBPF EDR is a Linux endpoint-security research project that combines **kernel-level eBPF instrumentation**, a **Go userspace telemetry and detection agent**, and a **React/TypeScript security dashboard**.
+
+The system is designed to demonstrate how security telemetry can be collected close to the Linux kernel, normalized in userspace, correlated into behavioral signals, and exposed through APIs for security operations tooling.
+
+
 
 > **Status:** Research / Security Engineering Project  
 > **Architecture:** eBPF/C + Go userspace agent + React/TypeScript dashboard  
@@ -96,45 +110,6 @@ The goal is not to claim that eBPF is impossible to evade. The goal is to demons
 
 # Architecture
 
-```text
-                         Linux Host
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │   Linux Kernel  │
-                    │                 │
-                    │ eBPF / C        │
-                    │ Tracepoints     │
-                    │ Kprobes         │
-                    │ Kretprobes      │
-                    │ BPF Maps        │
-                    │ Ring Buffer     │
-                    └────────┬────────┘
-                             │
-                       kernel events
-                             ▼
-                    ┌─────────────────┐
-                    │    Go Agent     │
-                    │                 │
-                    │ ABI decoding    │
-                    │ Normalization   │
-                    │ State           │
-                    │ Correlation     │
-                    │ Detection       │
-                    │ Metrics         │
-                    │ REST API        │
-                    └───────┬─────────┘
-                            │
-                 ┌──────────┴──────────┐
-                 │                     │
-                 ▼                     ▼
-          /api/alerts             /api/network
-                 │                     │
-                 └──────────┬──────────┘
-                            ▼
-                   React / TypeScript
-                       SOC Dashboard
-```
 
 The architecture deliberately separates:
 
@@ -336,29 +311,6 @@ Packet payloads are not captured by the generic network telemetry path. The desi
 ---
 
 # Event ABI
-
-Kernel events are transferred through a BPF ring buffer and decoded field-by-field by `agent/events.go`.
-
-Current event types:
-
-| ID | Event |
-|---:|---|
-| 1 | `EXEC` |
-| 2 | `OPEN` |
-| 3 | `CONNECT` |
-| 4 | `PTRACE` |
-| 5 | `MPROTECT` |
-| 6 | `VM_WRITEV` |
-| 7 | `ACCEPT` |
-| 8 | `LISTEN` |
-| 9 | `MODULE_LOAD` |
-| 10 | `BPF_LOAD` |
-| 11 | `PRIVESC` |
-| 12 | `MEMFD` |
-| 13 | `SOCKET` |
-| 14 | `UNLINK` |
-| 15 | `SETNS` |
-| 16 | `PACKET` |
 
 The event structure carries process identity, execution context, alert flags, IPv4/IPv6 addresses, ports, target PID, family, protocol, direction, credential fields, socket fields, and packet length.
 
