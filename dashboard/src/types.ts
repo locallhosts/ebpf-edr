@@ -31,3 +31,20 @@ export const severityColor: Record<Alert["severity"], string> = {
   High: "#f97316",
   Critical: "#ef4444",
 };
+
+
+export interface NetworkFlow {
+  time: string;
+  pid: number;
+  ppid: number;
+  comm: string;
+  event_type: "CONNECT" | "ACCEPT" | "LISTEN" | "SOCKET" | "PACKET";
+  family: string;
+  protocol: string;
+  direction: "INBOUND" | "OUTBOUND";
+  src_addr?: string;
+  src_port?: number;
+  dst_addr?: string;
+  dst_port?: number;
+  packet_len?: number;
+}

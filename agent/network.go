@@ -20,6 +20,7 @@ type NetworkFlow struct {
     SrcPort   uint16 `json:"src_port,omitempty"`
     DstAddr   string `json:"dst_addr,omitempty"`
     DstPort   uint16 `json:"dst_port,omitempty"`
+    PacketLen uint32 `json:"packet_len,omitempty"`
 }
 
 type NetworkStore struct {
@@ -43,6 +44,7 @@ func (s *NetworkStore) Add(ev Event) {
         Protocol: ev.ProtocolName(), Direction: ev.DirectionName(),
         SrcAddr: ipString(ev.SrcAddr, ev.SrcAddr6), SrcPort: ev.SrcPort,
         DstAddr: ipString(ev.DstAddr, ev.DstAddr6), DstPort: ev.DstPort,
+        PacketLen: ev.PacketLen,
     }
 
     s.mu.Lock()

@@ -91,6 +91,10 @@ func LoadAndAttach() (*LoadedProbes, error) {
 
         // IPv4 + IPv6 TCP.
         {"trace_connect_v4", "kprobe", "tcp_v4_connect", false},
+        {"trace_ip_rcv", "kprobe", "ip_rcv", false},
+        {"trace_ip6_rcv", "kprobe", "ip6_rcv", false},
+        {"trace_ip_output", "kprobe", "ip_output", false},
+        {"trace_ip6_finish_output2", "kprobe", "ip6_finish_output2", false},
         {"trace_connect_v6", "kprobe", "tcp_v6_connect", false},
 
         // IPv4 + IPv6 UDP.

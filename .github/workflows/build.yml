@@ -18,8 +18,40 @@ jobs:
 
       - name: Install eBPF build dependencies
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y clang llvm libbpf-dev libelf-dev bpftool
+          sudo apt-get install -y clang llvm libbpf-dev libelf-dev linux-tools-common
+          case "$(uname -r)" in
+            *azure*) sudo apt-get install -y linux-tools-azure ;;
+            *lowlatency*) sudo apt-get install -y linux-lowlatency-tools-common || true ;;
+            *) sudo apt-get install -y linux-tools-generic ;;
+          esac
+
+          BPFTOOL_BIN=""
+          for p in /usr/lib/linux-tools/*/bpftool /usr/lib/linux-tools-*/bpftool; do
+            if [ -x "$p" ] && [ ! -L "$p" ]; then
+              BPFTOOL_BIN="$p"
+              break
+            fi
+          done
+
+          if [ -z "$BPFTOOL_BIN" ]; then
+            echo "No standalone bpftool binary was installed"
+            find /usr/lib/linux-tools -maxdepth 2 -type f -name bpftool -print || true
+            exit 1
+          fi
+
+          echo "Using bpftool: $BPFTOOL_BIN"
+          "$BPFTOOL_BIN" version
+          sudo ln -sf "$BPFTOOL_BIN" /usr/local/bin/bpftool
+
+      - name: Generate kernel BTF header
+        run: |
+          set -euo pipefail
+          test -r /sys/kernel/btf/vmlinux
+          bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
+          test -s bpf/vmlinux.h
+          wc -l bpf/vmlinux.h
 
       - name: Build eBPF object
         run: make bpf

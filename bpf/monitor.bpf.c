@@ -47,8 +47,9 @@ char LICENSE[] SEC("license") = "GPL";
 #define EVT_SOCKET_CREATE 13 // NEW: socket() syscall
 #define EVT_UNLINK        14 // NEW: unlink/unlinkat
 #define EVT_SETNS         15 // NEW: setns()
+#define EVT_PACKET        16 // Generic IPv4/IPv6 packet telemetry
 
-/* ---- Address family / protocol tags (mirrors Linux AF_*/IPPROTO_*) ---- */
+/* ---- Address family / protocol tags (mirrors Linux AF_* and IPPROTO_* values) ---- */
 #define FAM_INET       2   // AF_INET
 #define FAM_INET6      10  // AF_INET6
 #define FAM_PACKET     17  // AF_PACKET - raw sockets live here
@@ -119,6 +120,7 @@ struct event {
     __u32 new_uid;      // NEW: uid after a commit_creds transition
     __u32 sock_family;  // NEW: AF_* for socket() creation events
     __u32 sock_type;    // NEW: SOCK_* for socket() creation events
+    __u32 packet_len;   // Generic L3 packet length
 };
 
 /* Ring buffer */
@@ -228,8 +230,8 @@ static __always_inline int is_persistence_path(const char *path) {
     return 0;
 }
 
-/* fileless-exec indicator - execve target living under /proc/*/fd/ or
- * /dev/fd/ or /memfd: means the code being run has no path on disk. */
+/* fileless-exec indicator - execve target living under /proc/<pid>/fd/,
+ * /dev/fd/, or /memfd: means the code being run has no path on disk. */
 static __always_inline int is_fileless_exec_target(const char *path) {
     if (path_startswith(path, "/proc/self/fd/", 14)) return 1;
     if (path_startswith(path, "/dev/fd/", 8)) return 1;
@@ -572,6 +574,122 @@ int trace_setns(struct trace_event_raw_sys_enter_setns *ctx) {
 /* ============================================================
  * Network hooks 
  * ============================================================ */
+/* ============================================================
+ * Generic L3 packet visibility
+ *
+ * These hooks complement the TCP/UDP socket hooks above. They
+ * intentionally record metadata only: no packet payload is copied.
+ * IPv4/IPv6 hooks therefore cover ICMP, ICMPv6, SCTP and other IP
+ * protocol numbers without needing a protocol-specific kernel hook.
+ * ============================================================ */
+
+static __always_inline void emit_ip_packet(struct sk_buff *skb, __u8 direction) {
+    if (!skb) return;
+
+    void *data = NULL;
+    __u16 network_header = 0;
+    __u32 skb_len = 0;
+    BPF_CORE_READ_INTO(&data, skb, data);
+    BPF_CORE_READ_INTO(&network_header, skb, network_header);
+    BPF_CORE_READ_INTO(&skb_len, skb, len);
+    if (!data) return;
+
+    unsigned char *nh = (unsigned char *)data + network_header;
+    __u8 first = 0;
+    if (bpf_probe_read_kernel(&first, sizeof(first), nh) != 0) return;
+
+    __u8 version = first >> 4;
+    struct event *ev = get_scratch_event();
+    if (!ev) return;
+    fill_common(ev, EVT_PACKET);
+    ev->direction = direction;
+    ev->packet_len = skb_len;
+
+    if (version == 4) {
+        struct {
+            __u8 ihl_version;
+            __u8 tos;
+            __be16 tot_len;
+            __be16 id;
+            __be16 frag_off;
+            __u8 ttl;
+            __u8 protocol;
+            __be16 check;
+            __be32 saddr;
+            __be32 daddr;
+        } iph = {};
+        if (bpf_probe_read_kernel(&iph, sizeof(iph), nh) != 0) return;
+        if ((iph.ihl_version >> 4) != 4) return;
+
+        ev->family = FAM_INET;
+        ev->protocol = iph.protocol;
+        ev->src_addr = iph.saddr;
+        ev->dst_addr = iph.daddr;
+
+        /* TCP/UDP/SCTP all begin with source/destination ports. */
+        if (iph.protocol == PROTO_TCP || iph.protocol == PROTO_UDP || iph.protocol == PROTO_SCTP) {
+            __u16 ports[2] = {};
+            if (bpf_probe_read_kernel(ports, sizeof(ports), nh + ((iph.ihl_version & 0x0f) * 4)) == 0) {
+                ev->src_port = bpf_ntohs(ports[0]);
+                ev->dst_port = bpf_ntohs(ports[1]);
+            }
+        }
+        submit_event(ev);
+        return;
+    }
+
+    if (version == 6) {
+        struct {
+            __u32 vtc_flow;
+            __be16 payload_len;
+            __u8 next_header;
+            __u8 hop_limit;
+            __u8 saddr[16];
+            __u8 daddr[16];
+        } ip6h = {};
+        if (bpf_probe_read_kernel(&ip6h, sizeof(ip6h), nh) != 0) return;
+        if ((ip6h.vtc_flow >> 28) != 6) return;
+
+        ev->family = FAM_INET6;
+        ev->protocol = ip6h.next_header;
+        __builtin_memcpy(ev->src_addr6, ip6h.saddr, 16);
+        __builtin_memcpy(ev->dst_addr6, ip6h.daddr, 16);
+
+        if (ip6h.next_header == PROTO_TCP || ip6h.next_header == PROTO_UDP || ip6h.next_header == PROTO_SCTP) {
+            __u16 ports[2] = {};
+            if (bpf_probe_read_kernel(ports, sizeof(ports), nh + sizeof(ip6h)) == 0) {
+                ev->src_port = bpf_ntohs(ports[0]);
+                ev->dst_port = bpf_ntohs(ports[1]);
+            }
+        }
+        submit_event(ev);
+    }
+}
+
+SEC("kprobe/ip_rcv")
+int BPF_KPROBE(trace_ip_rcv, struct sk_buff *skb) {
+    emit_ip_packet(skb, DIR_INBOUND);
+    return 0;
+}
+
+SEC("kprobe/ip6_rcv")
+int BPF_KPROBE(trace_ip6_rcv, struct sk_buff *skb) {
+    emit_ip_packet(skb, DIR_INBOUND);
+    return 0;
+}
+
+SEC("kprobe/ip_output")
+int BPF_KPROBE(trace_ip_output, struct net *net, struct sock *sk, struct sk_buff *skb) {
+    emit_ip_packet(skb, DIR_OUTBOUND);
+    return 0;
+}
+
+SEC("kprobe/ip6_finish_output2")
+int BPF_KPROBE(trace_ip6_finish_output2, struct net *net, struct sock *sk, struct sk_buff *skb) {
+    emit_ip_packet(skb, DIR_OUTBOUND);
+    return 0;
+}
+
 SEC("kprobe/tcp_v4_connect")
 int BPF_KPROBE(trace_connect_v4, struct sock *sk) {
     struct event *ev = get_scratch_event();
