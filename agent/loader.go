@@ -41,8 +41,7 @@ func loadCollection(object []byte) (*ebpf.Collection, error) {
     if err != nil {
         var ve *ebpf.VerifierError
         if errors.As(err, &ve) {
-            return nil, fmt.Errorf("verifier rejected program:
-%+v", ve)
+            return nil, fmt.Errorf("verifier rejected program:\n%+v", ve)
         }
         return nil, fmt.Errorf("loading BPF collection: %w", err)
     }
