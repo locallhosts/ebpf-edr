@@ -679,7 +679,7 @@ int BPF_KPROBE(trace_ip6_rcv, struct sk_buff *skb) {
 }
 
 SEC("kprobe/ip_output")
-int BPF_KPROBE(trace_ip_output, struct sock *sk, struct sk_buff *skb) {
+int BPF_KPROBE(trace_ip_output, struct net *net, struct sock *sk, struct sk_buff *skb) {
     emit_ip_packet(skb, DIR_OUTBOUND);
     return 0;
 }
