@@ -136,9 +136,6 @@ func (lp *LoadedProbes) Read() (Event, error) {
     if err != nil {
         return Event{}, err
     }
-    if record.LostSamples > 0 {
-        ringbufLoss.Add(float64(record.LostSamples))
-    }
     return parseEvent(record.RawSample)
 }
 
