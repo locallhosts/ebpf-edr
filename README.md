@@ -29,7 +29,9 @@ The project currently focuses on:
 * Cross-process memory operations
 * `ptrace()` activity
 * Environment-variable based injection indicators
-* Outbound TCP connections
+* IPv4/IPv6 TCP connections
+* IPv4/IPv6 UDP traffic
+* Socket creation telemetry for ICMP, ICMPv6, SCTP, raw and other IP protocols
 * Process ancestry
 * Stateful behavioral correlations
 
@@ -99,13 +101,11 @@ Tracepoints provide a relatively stable instrumentation interface compared with 
 
 ### Kprobes
 
-The project also uses a kprobe on:
+The project uses protocol-specific network kprobes for both IPv4 and IPv6. TCP connection attempts are observed through `tcp_v4_connect` / `tcp_v6_connect`, while UDP datagrams are observed through `udp_sendmsg` / `udpv6_sendmsg`. TCP accept/listen activity is also collected.
 
-```text
-tcp_v4_connect
-```
+Socket creation is monitored separately through the `socket()` syscall. This records the address family, socket type, and IP protocol identifier, allowing the agent to identify ICMP, ICMPv6, SCTP, raw/packet sockets, and other protocols even when they do not use TCP-style connection semantics.
 
-This provides visibility into selected outbound IPv4 TCP connection attempts at the kernel level.
+Network telemetry is metadata-only: the agent records process, protocol, addresses and ports where available, but does not capture packet payloads.
 
 ### BPF Maps
 
@@ -667,7 +667,10 @@ Potential future improvements include:
 * [ ] Add GitHub Actions CI
 * [ ] Add reproducible performance benchmarks
 * [ ] Add event-loss stress testing
-* [ ] Add more network telemetry
+* [x] IPv4/IPv6 TCP telemetry
+* [x] IPv4/IPv6 UDP telemetry
+* [x] Protocol-aware socket telemetry
+* [x] Bounded `/api/network` network telemetry API
 * [ ] Add configurable detection policies
 * [ ] Improve alert deduplication
 * [ ] Add richer SIEM/SOAR integration
