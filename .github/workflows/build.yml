@@ -27,10 +27,6 @@ jobs:
             *) sudo apt-get install -y linux-tools-generic ;;
           esac
 
-          # Ubuntu's /usr/sbin/bpftool can be a kernel-version wrapper. The
-          # hosted runner may be running a kernel whose exact tools package is
-          # unavailable, while a compatible bpftool binary is already installed
-          # under /usr/lib/linux-tools/<version>. Prefer that real binary.
           BPFTOOL_BIN=""
           for p in /usr/lib/linux-tools/*/bpftool /usr/lib/linux-tools-*/bpftool; do
             if [ -x "$p" ] && [ ! -L "$p" ]; then
@@ -48,6 +44,14 @@ jobs:
           echo "Using bpftool: $BPFTOOL_BIN"
           "$BPFTOOL_BIN" version
           sudo ln -sf "$BPFTOOL_BIN" /usr/local/bin/bpftool
+
+      - name: Generate kernel BTF header
+        run: |
+          set -euo pipefail
+          test -r /sys/kernel/btf/vmlinux
+          bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
+          test -s bpf/vmlinux.h
+          wc -l bpf/vmlinux.h
 
       - name: Build eBPF object
         run: make bpf
