@@ -12,27 +12,17 @@ import (
     "github.com/cilium/ebpf/ringbuf"
     "github.com/cilium/ebpf/rlimit"
 )
-// The compiled BPF object is embedded directly into the agent binary at
-// build time. This means the deployed agent is a single static binary —
-// no clang, no libbpf headers, no source tree needs to exist on the
-// target machine.
-//
+
 //go:embed monitor.bpf.o
 var bpfObject []byte
 
-// LoadedProbes holds every attached link and the ring buffer reader so
-// the caller can clean up deterministically on shutdown.
 type LoadedProbes struct {
     collection *ebpf.Collection
     links      []link.Link
     reader     *ringbuf.Reader
 }
 
-// LoadAndAttach loads the embedded BPF object, verifies it against the
-// running kernel, and attaches every program to its target hook.
 func LoadAndAttach() (*LoadedProbes, error) {
-    // eBPF requires elevated resource limits for locked memory on
-    // kernels without cgroup-based BPF memory accounting (< 5.11).
     if err := rlimit.RemoveMemlock(); err != nil {
         return nil, fmt.Errorf("removing memlock rlimit: %w", err)
     }
@@ -46,9 +36,6 @@ func LoadAndAttach() (*LoadedProbes, error) {
     if err != nil {
         var ve *ebpf.VerifierError
         if errors.As(err, &ve) {
-            // %+v on a VerifierError prints the full instruction-level
-            // verifier log, which is exactly what you want when a
-            // kernel rejects the program.
             return nil, fmt.Errorf("verifier rejected program:\n%+v", ve)
         }
         return nil, fmt.Errorf("loading BPF collection: %w", err)
@@ -56,20 +43,21 @@ func LoadAndAttach() (*LoadedProbes, error) {
 
     lp := &LoadedProbes{collection: coll}
 
-    // Helper to attach programs
     attach := func(progName, kind, target string) error {
         prog := coll.Programs[progName]
         if prog == nil {
             return fmt.Errorf("program %q not found in compiled object", progName)
         }
+
         var l link.Link
-        var err error
         switch kind {
         case "tracepoint":
-            category, name := splitTracepoint(target) // splitTracepoint is in utils.go
+            category, name := splitTracepoint(target)
             l, err = link.Tracepoint(category, name, prog, nil)
         case "kprobe":
             l, err = link.Kprobe(target, prog, nil)
+        case "kretprobe":
+            l, err = link.Kretprobe(target, prog, nil)
         default:
             return fmt.Errorf("unknown hook kind %q", kind)
         }
@@ -80,19 +68,41 @@ func LoadAndAttach() (*LoadedProbes, error) {
         return nil
     }
 
-    // Define all kernel hooks
+    // Tracepoints are stable syscall instrumentation and remain required.
+    // Kernel network functions vary across distro/kernel versions, so the
+    // network kprobes are optional: the agent keeps all available telemetry
+    // rather than failing startup because one symbol is absent.
     hooks := []struct {
         prog, kind, target string
         required           bool
     }{
         {"trace_execve", "tracepoint", "syscalls/sys_enter_execve", true},
         {"trace_openat", "tracepoint", "syscalls/sys_enter_openat", true},
-        // kprobes need a deeper privilege level than tracepoints
-        {"trace_connect", "kprobe", "tcp_v4_connect", false},
         {"trace_ptrace", "tracepoint", "syscalls/sys_enter_ptrace", true},
-        // NEW: Memory protection and cross-process injection detection
         {"trace_mprotect", "tracepoint", "syscalls/sys_enter_mprotect", true},
         {"trace_process_vm_writev", "tracepoint", "syscalls/sys_enter_process_vm_writev", true},
+        {"trace_init_module", "tracepoint", "syscalls/sys_enter_init_module", false},
+        {"trace_finit_module", "tracepoint", "syscalls/sys_enter_finit_module", false},
+        {"trace_bpf", "tracepoint", "syscalls/sys_enter_bpf", false},
+        {"trace_memfd_create", "tracepoint", "syscalls/sys_enter_memfd_create", false},
+        {"trace_socket", "tracepoint", "syscalls/sys_enter_socket", false},
+        {"trace_unlinkat", "tracepoint", "syscalls/sys_enter_unlinkat", false},
+        {"trace_setns", "tracepoint", "syscalls/sys_enter_setns", false},
+
+        // IPv4 + IPv6 TCP.
+        {"trace_connect_v4", "kprobe", "tcp_v4_connect", false},
+        {"trace_connect_v6", "kprobe", "tcp_v6_connect", false},
+
+        // IPv4 + IPv6 UDP.
+        {"trace_udp_sendmsg", "kprobe", "udp_sendmsg", false},
+        {"trace_udpv6_sendmsg", "kprobe", "udpv6_sendmsg", false},
+
+        // TCP inbound/listener visibility.
+        {"trace_inet_csk_accept", "kretprobe", "inet_csk_accept", false},
+        {"trace_listen_start", "kprobe", "inet_csk_listen_start", false},
+
+        // Credential transition and other security telemetry.
+        {"trace_commit_creds", "kprobe", "commit_creds", false},
     }
 
     for _, h := range hooks {
@@ -102,7 +112,6 @@ func LoadAndAttach() (*LoadedProbes, error) {
                 return nil, err
             }
             log.Printf("WARNING: optional probe %s (%s:%s) not attached: %v", h.prog, h.kind, h.target, err)
-            log.Printf("  -> this host/container restricts kprobes; network-connect detection will be unavailable until run with fuller privileges")
             continue
         }
         log.Printf("attached %s -> %s:%s", h.prog, h.kind, h.target)
@@ -118,8 +127,6 @@ func LoadAndAttach() (*LoadedProbes, error) {
     return lp, nil
 }
 
-// Read blocks until the next event is available (or the reader is
-// closed during shutdown, in which case it returns ringbuf.ErrClosed).
 func (lp *LoadedProbes) Read() (Event, error) {
     record, err := lp.reader.Read()
     if err != nil {
@@ -128,7 +135,6 @@ func (lp *LoadedProbes) Read() (Event, error) {
     return parseEvent(record.RawSample)
 }
 
-// Close cleanly detaches all BPF links and closes the collection.
 func (lp *LoadedProbes) Close() {
     if lp.reader != nil {
         _ = lp.reader.Close()
